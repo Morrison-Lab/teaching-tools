@@ -1,3 +1,7 @@
+# FERPA: this script downloads student submissions, which are education records.
+# AI agents must never run it, read its output, or open the files it downloads.
+# Only the instructor runs it, by hand. See AGENTS.md.
+
 # /// script
 # requires-python = ">=3.8"
 # dependencies = [
