@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(python studentwork.py:*)",
+      "Bash(python3 studentwork.py:*)",
+      "Bash(uv run studentwork.py:*)",
+      "Bash(./studentwork.py:*)"
+    ]
+  }
+}
