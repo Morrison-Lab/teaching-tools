@@ -14,8 +14,10 @@ Run it again and nothing changes unless a file changed: an assignment is
 matched by name, created if missing, and updated only in the fields that
 differ. Attachments are uploaded to one Canvas Files folder, replacing any
 file of the same name, and linked from the end of the description; they are
-re-uploaded on every --apply run. Without --apply it is a dry run that
-prints what it would do and writes nothing.
+re-uploaded on every --apply run, into a folder created hidden (reachable by
+link only). Without --apply it is a dry run that prints what it would do
+and writes nothing. An assignment already published in Canvas is never
+unpublished unless --allow-unpublish is given.
 
 Usage:
     uv run sync_assignments.py path/to/canvas.yml            # dry run
@@ -28,6 +30,7 @@ Config file (paths are relative to the config file):
     files:
       - Homework/2026-fall-morrison/hw*.qmd
     attachments_folder: Homework    # Canvas Files folder for attachments
+    attachments_intro: "<p>...</p>" # HTML put before the links, if any
     defaults:                       # optional; applied to every assignment
       submission_types: [online_upload]
       allowed_extensions: [pdf]
@@ -42,6 +45,7 @@ Front matter of each file:
     canvas:
       name: "Homework 1"            # optional; defaults to `title`
       due_at: 2026-10-14T23:59:00-07:00   # must carry a UTC offset
+      lock_at: 2026-10-15T23:59:00-07:00  # optional; submissions close
       points_possible: 34
       published: false
       description: "<p>...</p>"     # optional; HTML
@@ -70,6 +74,7 @@ import yaml
 MANAGED = [
     "name",
     "due_at",
+    "lock_at",
     "points_possible",
     "published",
     "description",
@@ -77,6 +82,7 @@ MANAGED = [
     "allowed_extensions",
     "assignment_group_id",
 ]
+TIMES = ("due_at", "lock_at")
 
 
 def read_front_matter(path):
@@ -98,7 +104,7 @@ def parse_time(value):
     else:
         when = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if when.tzinfo is None:
-        raise ValueError(f"due_at {value!r} has no UTC offset")
+        raise ValueError(f"time {value!r} has no UTC offset")
     return when.astimezone(dt.timezone.utc)
 
 
@@ -117,7 +123,9 @@ def wanted_assignments(config_path):
             item.setdefault("name", meta.get("title"))
             if not item.get("name"):
                 raise ValueError(f"{path}: no canvas.name and no title")
-            item["due_at"] = parse_time(item.get("due_at"))
+            for field in TIMES:
+                if field in item:
+                    item[field] = parse_time(item[field])
             item["_source"] = os.path.relpath(path, base)
             stem = Path(path).stem
             item["attachments"] = [
@@ -132,7 +140,7 @@ def wanted_assignments(config_path):
 
 
 def normalize(field, value):
-    if field == "due_at":
+    if field in TIMES:
         return parse_time(value)
     if field in ("submission_types", "allowed_extensions"):
         return sorted(value or [])
@@ -143,11 +151,19 @@ def normalize(field, value):
     return value
 
 
-def changes(item, existing):
-    """The managed fields whose wanted value differs from the existing one."""
+def changes(item, existing, allow_unpublish=False):
+    """The managed fields whose wanted value differs from the existing one.
+
+    An assignment already published in Canvas is never unpublished unless
+    allow_unpublish is set: it may have been published by hand on release
+    day, and Canvas refuses to unpublish one that has submissions.
+    """
     diff = {}
     for field in MANAGED:
         if field not in item:
+            continue
+        if (field == "published" and not allow_unpublish and existing is not None
+                and getattr(existing, "published", False) and not item[field]):
             continue
         new = normalize(field, item[field])
         old = normalize(field, getattr(existing, field, None)) if existing else None
@@ -179,8 +195,8 @@ def file_links(config, folder, wanted):
     return links
 
 
-def with_attachments(item, links):
-    """Append a list of links to the item's attachments to its description."""
+def with_attachments(item, links, intro=""):
+    """Append `intro` and links to the item's attachments to its description."""
     if not item["attachments"]:
         return item
     rows = []
@@ -188,7 +204,8 @@ def with_attachments(item, links):
         url = links.get(path.name) or "(not uploaded yet)"
         rows.append(f'<li><a href="{url}">{path.name}</a></li>')
     item = dict(item)
-    item["description"] = (item.get("description") or "").strip() + "\n<ul>\n" + "\n".join(rows) + "\n</ul>"
+    parts = [(item.get("description") or "").strip(), intro.strip(), "<ul>", *rows, "</ul>"]
+    item["description"] = "\n".join(p for p in parts if p)
     return item
 
 
@@ -198,7 +215,9 @@ def upload_attachments(course, config, wanted):
     folder = find_folder(course, path)
     if folder is None:
         parent, _, name = path.strip("/").rpartition("/")
-        folder = course.create_folder(name, parent_folder_path=parent)
+        # Hidden: its files open from the assignment's links but are not listed
+        # in the Files tab, so an unpublished assignment's files stay out of sight.
+        folder = course.create_folder(name, parent_folder_path=parent, hidden=True)
     for item in wanted:
         for attachment in item["attachments"]:
             ok, response = folder.upload(str(attachment), on_duplicate="overwrite")
@@ -210,13 +229,14 @@ def upload_attachments(course, config, wanted):
 
 def to_api(fields):
     out = dict(fields)
-    if isinstance(out.get("due_at"), dt.datetime):
-        out["due_at"] = out["due_at"].isoformat()
+    for field in TIMES:
+        if isinstance(out.get(field), dt.datetime):
+            out[field] = out[field].isoformat()
     out["notify_of_update"] = False
     return out
 
 
-def plan(course, wanted, group_ids):
+def plan(course, wanted, group_ids, allow_unpublish=False):
     """Return a list of (action, item, fields, existing) without writing."""
     existing, seen_twice = {}, set()
     for a in course.get_assignments():
@@ -235,7 +255,7 @@ def plan(course, wanted, group_ids):
                 raise ValueError(f"no assignment group named {group!r}")
             item["assignment_group_id"] = group_ids[group]
         old = existing.get(item["name"])
-        diff = changes(item, old)
+        diff = changes(item, old, allow_unpublish)
         action = "create" if old is None else ("update" if diff else "unchanged")
         steps.append((action, item, diff, old))
     return steps
@@ -281,6 +301,11 @@ def main(argv=None):
     parser.add_argument("config", help="the course's canvas.yml")
     parser.add_argument("--apply", action="store_true", help="write to Canvas")
     parser.add_argument("--keychain-service", default="canvas-token")
+    parser.add_argument(
+        "--allow-unpublish",
+        action="store_true",
+        help="let `published: false` unpublish an assignment that is published in Canvas",
+    )
     args = parser.parse_args(argv)
 
     from canvasapi import Canvas
@@ -296,22 +321,30 @@ def main(argv=None):
     missing = [str(p) for w in wanted for p in w["attachments"] if not p.is_file()]
     if missing:
         sys.exit("Attachments not found (build them first):\n  " + "\n  ".join(missing))
-    if args.apply:
-        folder = upload_attachments(course, config, wanted)
-    else:
-        folder = find_folder(course, config.get("attachments_folder", ""))
+    intro = config.get("attachments_intro", "")
+
+    # Plan once before writing anything, so a bad group name or an ambiguous
+    # match stops the run before any upload.
+    folder = find_folder(course, config.get("attachments_folder", ""))
+    links = file_links(config, folder, wanted)
+    steps = plan(course, [with_attachments(w, links, intro) for w in wanted],
+                 group_ids, args.allow_unpublish)
+
+    if not args.apply:
         for w in wanted:
             for p in w["attachments"]:
                 print(f"would upload {p.name}")
-    links = file_links(config, folder, wanted)
-    wanted = [with_attachments(w, links) for w in wanted]
-
-    steps = plan(course, wanted, group_ids)
-    report(steps)
-
-    if not args.apply:
+        report(steps)
         print("\nDry run: nothing was written. Re-run with --apply to write.")
+        print("Attachment links show the files now in Canvas; uploading gives them new ids.")
         return
+
+    # Uploading replaces each file with a new one, so re-plan with the new links.
+    folder = upload_attachments(course, config, wanted)
+    links = file_links(config, folder, wanted)
+    steps = plan(course, [with_attachments(w, links, intro) for w in wanted],
+                 group_ids, args.allow_unpublish)
+    report(steps)
     for action, item, diff, old in steps:
         if action == "create":
             course.create_assignment(to_api(diff))

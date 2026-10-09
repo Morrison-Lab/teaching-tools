@@ -118,6 +118,37 @@ class SyncTest(unittest.TestCase):
         self.assertIn('<a href="https://example.instructure.com/courses/1/files/42">hw3.pdf</a>', text)
         self.assertIn("(not uploaded yet)", text)
 
+    def test_never_unpublishes_without_the_flag(self):
+        item = {"name": "Homework 1", "published": False}
+        live = SimpleNamespace(name="Homework 1", published=True)
+        self.assertEqual(sa.changes(item, live), {})
+        self.assertEqual(sa.changes(item, live, allow_unpublish=True), {"published": False})
+        draft = SimpleNamespace(name="Homework 1", published=False)
+        self.assertEqual(sa.changes({"name": "Homework 1", "published": True}, draft),
+                         {"published": True})
+
+    def test_lock_at_and_absent_times(self):
+        d = Path(self.tmp.name)
+        write(d, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  due_at: 2026-10-15T23:59:00-07:00\n"
+            "  lock_at: 2026-10-16T23:59:00-07:00\n---\n"
+        ))
+        _, wanted = sa.wanted_assignments(self.config)
+        by_name = {w["name"]: w for w in wanted}
+        self.assertNotIn("lock_at", by_name["Homework 1"])
+        payload = sa.to_api({"lock_at": by_name["Homework 3"]["lock_at"]})
+        self.assertEqual(payload["lock_at"], "2026-10-17T06:59:00+00:00")
+        live = SimpleNamespace(name="Homework 3", lock_at="2026-10-17T06:59:00Z")
+        self.assertNotIn("lock_at", sa.changes(by_name["Homework 3"], live))
+
+    def test_intro_appears_only_with_attachments(self):
+        plain = {"description": "<p>Submit a PDF.</p>", "attachments": []}
+        self.assertEqual(sa.with_attachments(plain, {}, "<p>Files:</p>"), plain)
+        withfile = {"description": "<p>Submit a PDF.</p>", "attachments": [Path("hw.pdf")]}
+        text = sa.with_attachments(withfile, {"hw.pdf": "u"}, "<p>Files:</p>")["description"]
+        self.assertEqual(text.splitlines()[:2], ["<p>Submit a PDF.</p>", "<p>Files:</p>"])
+
     def test_api_payload_is_silent_and_serializable(self):
         _, wanted = sa.wanted_assignments(self.config)
         steps = sa.plan(FakeCourse([]), wanted, {"Homework": 7})
