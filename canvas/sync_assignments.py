@@ -12,7 +12,10 @@ repository holds the config file and the front matter.
 
 Run it again and nothing changes unless a file changed: an assignment is
 matched by name, created if missing, and updated only in the fields that
-differ. Without --apply it is a dry run that prints what it would do.
+differ. Attachments are uploaded to one Canvas Files folder, replacing any
+file of the same name, and linked from the end of the description; they are
+re-uploaded on every --apply run. Without --apply it is a dry run that
+prints what it would do and writes nothing.
 
 Usage:
     uv run sync_assignments.py path/to/canvas.yml            # dry run
@@ -24,10 +27,14 @@ Config file (paths are relative to the config file):
     course_id: 1906010
     files:
       - Homework/2026-fall-morrison/hw*.qmd
+    attachments_folder: Homework    # Canvas Files folder for attachments
     defaults:                       # optional; applied to every assignment
       submission_types: [online_upload]
       allowed_extensions: [pdf]
       assignment_group: Homework    # looked up by name; must already exist
+      description: "<p>...</p>"     # HTML; attachment links are appended
+      attachments:                  # {stem} is the source file's name, no suffix
+        - _output/{stem}.pdf
 
 Front matter of each file:
 
@@ -43,8 +50,8 @@ Token: the CANVAS_TOKEN environment variable if set, otherwise the macOS
 keychain item named by --keychain-service (default `canvas-token`). The
 token is never printed.
 
-Student records: this script calls only the course, assignment-group and
-assignment endpoints, never with an include[] parameter, so it reads no
+Student records: this script calls only the course, assignment-group,
+assignment, folder and file endpoints, never with an include[] parameter, so it reads no
 roster, submission or grade. Keep it that way: those are FERPA education
 records, and must not be pulled at all.
 """
@@ -112,6 +119,10 @@ def wanted_assignments(config_path):
                 raise ValueError(f"{path}: no canvas.name and no title")
             item["due_at"] = parse_time(item.get("due_at"))
             item["_source"] = os.path.relpath(path, base)
+            stem = Path(path).stem
+            item["attachments"] = [
+                base / a.format(stem=stem) for a in item.get("attachments", [])
+            ]
             wanted.append(item)
     names = [w["name"] for w in wanted]
     dupes = {n for n in names if names.count(n) > 1}
@@ -143,6 +154,58 @@ def changes(item, existing):
         if existing is None or new != old:
             diff[field] = item[field]
     return diff
+
+
+def find_folder(course, path):
+    """The course folder at `path` (relative to the course's root), or None."""
+    full = "course files" + (f"/{path.strip('/')}" if path.strip("/") else "")
+    for folder in course.get_folders():
+        if folder.full_name == full:
+            return folder
+    return None
+
+
+def file_links(config, folder, wanted):
+    """Map each attachment's file name to its Canvas URL, or None if not uploaded."""
+    present = {}
+    if folder is not None:
+        present = {f.display_name: f.id for f in folder.get_files()}
+    root = f"{config['url'].rstrip('/')}/courses/{config['course_id']}/files"
+    links = {}
+    for item in wanted:
+        for path in item["attachments"]:
+            file_id = present.get(path.name)
+            links[path.name] = f"{root}/{file_id}" if file_id else None
+    return links
+
+
+def with_attachments(item, links):
+    """Append a list of links to the item's attachments to its description."""
+    if not item["attachments"]:
+        return item
+    rows = []
+    for path in item["attachments"]:
+        url = links.get(path.name) or "(not uploaded yet)"
+        rows.append(f'<li><a href="{url}">{path.name}</a></li>')
+    item = dict(item)
+    item["description"] = (item.get("description") or "").strip() + "\n<ul>\n" + "\n".join(rows) + "\n</ul>"
+    return item
+
+
+def upload_attachments(course, config, wanted):
+    """Upload every attachment, replacing a file of the same name. Returns the folder."""
+    path = config.get("attachments_folder", "")
+    folder = find_folder(course, path)
+    if folder is None:
+        parent, _, name = path.strip("/").rpartition("/")
+        folder = course.create_folder(name, parent_folder_path=parent)
+    for item in wanted:
+        for attachment in item["attachments"]:
+            ok, response = folder.upload(str(attachment), on_duplicate="overwrite")
+            if not ok:
+                sys.exit(f"Upload of {attachment.name} failed: {response}")
+            print(f"uploaded  {attachment.name}")
+    return folder
 
 
 def to_api(fields):
@@ -229,6 +292,20 @@ def main(argv=None):
 
     print(f"Course: {course.name} ({course.id})")
     print(f"Assignment groups: {', '.join(sorted(group_ids)) or '(none)'}\n")
+
+    missing = [str(p) for w in wanted for p in w["attachments"] if not p.is_file()]
+    if missing:
+        sys.exit("Attachments not found (build them first):\n  " + "\n  ".join(missing))
+    if args.apply:
+        folder = upload_attachments(course, config, wanted)
+    else:
+        folder = find_folder(course, config.get("attachments_folder", ""))
+        for w in wanted:
+            for p in w["attachments"]:
+                print(f"would upload {p.name}")
+    links = file_links(config, folder, wanted)
+    wanted = [with_attachments(w, links) for w in wanted]
+
     steps = plan(course, wanted, group_ids)
     report(steps)
 

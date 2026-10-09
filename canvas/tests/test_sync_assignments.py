@@ -95,6 +95,29 @@ class SyncTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             sa.plan(FakeCourse([twin, twin]), wanted, {"Homework": 7})
 
+    def test_attachments_are_linked_in_the_description(self):
+        d = Path(self.tmp.name)
+        write(d, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  description: <p>Submit a PDF.</p>\n"
+            "  attachments: ['{stem}.pdf', 'student/{stem}.qmd']\n---\n"
+        ))
+        config, wanted = sa.wanted_assignments(self.config)
+        hw3 = [w for w in wanted if w["name"] == "Homework 3"][0]
+        self.assertEqual([p.name for p in hw3["attachments"]], ["hw3.pdf", "hw3.qmd"])
+
+        folder = SimpleNamespace(
+            get_files=lambda: [SimpleNamespace(display_name="hw3.pdf", id=42)]
+        )
+        links = sa.file_links(config, folder, wanted)
+        self.assertEqual(links["hw3.pdf"], "https://example.instructure.com/courses/1/files/42")
+        self.assertIsNone(links["hw3.qmd"])
+
+        text = sa.with_attachments(hw3, links)["description"]
+        self.assertTrue(text.startswith("<p>Submit a PDF.</p>"))
+        self.assertIn('<a href="https://example.instructure.com/courses/1/files/42">hw3.pdf</a>', text)
+        self.assertIn("(not uploaded yet)", text)
+
     def test_api_payload_is_silent_and_serializable(self):
         _, wanted = sa.wanted_assignments(self.config)
         steps = sa.plan(FakeCourse([]), wanted, {"Homework": 7})
