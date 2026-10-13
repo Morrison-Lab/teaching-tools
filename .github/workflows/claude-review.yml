@@ -1,0 +1,84 @@
+# Caller for Morrison-Lab/gha's reusable Claude PR review workflow.
+# Automatic reviews run on in-repo PR opens, updates, reopens and draft->ready
+# transitions. The callee skips three cases, all worth knowing before relying
+# on a review having happened:
+#
+# - A DRAFT PR. Every review job requires `pull_request.draft == false`, so a
+#   PR opened as a draft is reviewed only once it is marked ready.
+# - A push by a BOT sender. Every review job requires
+#   `sender.type != 'Bot'`, so an agent's push under a bot identity, including
+#   a `claude[bot]` remote session, is not reviewed automatically.
+# - A PR that edits `.github/workflows/*.yml`, unless the callee can first
+#   replace the PR-head workflow tree with the default branch's copy (gha#598).
+#   While the default branch has no `.github/workflows` tree at all, that
+#   restore cannot succeed and every re-run skips the same way, posting
+#   "No review ran" under a `success` conclusion. Once workflows exist on the
+#   default branch a re-run recovers. Filed as gha#904.
+#
+# The workflow_dispatch path remains for explicit redispatches from
+# claude-bot.yml.
+#
+# NOTE: no top-level `concurrency:` block. The reusable workflow manages per-PR
+# concurrency on its own job; a PR-scoped group here deadlocks against it
+# (gha#437).
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Pull request number to review'
+        required: true
+        type: string
+
+jobs:
+  review:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      # No `id-token: write`. The callee omits it deliberately: forwarding
+      # `github.token` skips claude-code-action's OIDC App-token exchange,
+      # whose DEFAULT_PERMISSIONS are write, so granting it would let a dropped
+      # override mint that write token against an untrusted PR diff -- the
+      # split gha#580 exists to enforce. ai-config's caller grants it; that is
+      # inert there only because no job consumes it, and it is not a reason to
+      # widen the ceiling past what gha's own README recommends.
+      actions: read   # lets the reviewer read CI status (github_ci MCP server)
+      # Keep: the v3 tracked in gha#833 reinstates `checks: read` on the
+      # callee. Nothing consumes it at v2 -- gha@6c8ad441 dropped it, and the
+      # callee states that adding a job permission is a breaking change that
+      # belongs in a major-tag bump, never a v2 slide. Granting it now costs
+      # nothing and means the v3 bump needs no caller change.
+      checks: read
+    uses: Morrison-Lab/gha/.github/workflows/claude-code-review.yml@v2
+    secrets: inherit
+    with:
+      pr-number: ${{ github.event.pull_request.number || inputs.pr_number }}
+      # The SERG lab manual is R/tidyverse/Quarto guidance; this repository
+      # is Python scripts, a static site and workflows, so opt out.
+      lab-manual: false
+      prompt-addendum: |
+        ## What this repository is
+
+        Scripts and small tools for teaching: a Canvas assignment sync, a
+        Canvas recon script, an exercise-assignment generator, and
+        `course-explorer/`, a static search site over WWU's public class
+        schedule with a scraper and a daily Pages workflow.
+
+        ## Check these before anything else
+
+        1. **Student records (FERPA).** Agents never pull student data from
+           Canvas, and `studentwork.py` (which downloads submissions) is never
+           run by an agent; see AGENTS.md. Flag a diff that adds student data,
+           or code that calls a Canvas endpoint, passes a flag, or requests an
+           `include[]` value returning student records. In `course-explorer/`,
+           flag anything that stores secondary instructors (often graduate
+           TAs), e-mail addresses or Banner IDs.
+        2. **Secrets.** Canvas API tokens are used here. Flag anything that
+           looks like a real token rather than a placeholder.
+        3. **Accuracy of tool claims.** Command names, flags, and Canvas or
+           Banner endpoint paths are checkable; check them rather than judging
+           them plausible.

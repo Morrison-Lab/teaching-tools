@@ -1,0 +1,87 @@
+# Caller for Morrison-Lab/gha's reusable Claude Code agent workflow.
+# Responds to `@claude` mentions on issues and PRs, and re-dispatches
+# claude-review.yml after an agent run pushes commits.
+#
+# Summon the agent by mentioning it in a comment, or by opening an issue whose
+# body or title carries the mention.
+#
+# The `issues` event's `opened` type is subscribed (alongside `assigned`),
+# matching gha's own stub. `opened` is safe to subscribe because `claude.yml`
+# runs `detect-bot-mention` on `issues` events, fed both the body and the
+# title, and that action tells a mention addressed to the bot from one quoted
+# inside a code span, a fenced block, or a blockquote (gha#554). A quoted
+# mention therefore costs one short `mention-filter` job and normally no agent
+# run. "Normally" because the
+# detector step is `continue-on-error`, and an empty result is read as
+# proceed: the callee fails OPEN on a detector error, by design.
+#
+# Assignment ALONE is not a summon method here. At gha@v2 an `issues` event
+# reaches the agent only when the body or title carries the mention and the
+# author is trusted, or when the assignee is listed in `dispatch-on-assignee`
+# -- an input that defaults to `[]` and that this caller does not set, so that
+# second path is always false. Enabling it needs BOTH halves: the input here,
+# and a matching clause in the job's `if:` below, since without the clause the
+# reusable workflow is never invoked and without the input it stands down at
+# its own gate.
+#
+# Both clauses are present in `claude.yml`'s `mention-filter` job `if:` as the
+# file stands at gha@27721bd6 (a snapshot, not the commit that added them).
+# Cited by commit rather than by line number, because `@v2` is a floating tag
+# and a line reference goes stale the next time it slides.
+name: Claude Code
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    # Caller-side trusted-author gate, so an untrusted commenter's mention does
+    # not even spawn the reusable-workflow run. The callee's own mention-filter
+    # job gates the expensive agent run regardless, so nothing untrusted
+    # executes either way -- but gha's own caller stub says why the caller-side
+    # gate exists anyway: without it "the run still gets skipped downstream, but
+    # only after invoking a workflow that was granted elevated permissions and
+    # passed secrets".
+    #
+    # While this repository is private, that is a cost note rather than a
+    # security one: only collaborators can comment at all. Keep the gate regardless. It
+    # costs nothing, it is the difference between a skipped run and a run that
+    # was handed `contents: write`, `issues: write`, `actions: write` and
+    # `secrets: inherit` before being skipped, and a repository's visibility is
+    # one setting away from changing no matter what the current plan says.
+    # (Opening or assigning an issue is not the same exposure: the `issues`
+    # clause keys on the issue author's association, and an outside user cannot
+    # assign at all.)
+    #
+    # Two things below look like defects and are not. The `issues` clause keys
+    # on the ISSUE AUTHOR's association rather than the assigner's, because an
+    # `issues.assigned` payload carries no `author_association` for the sender;
+    # it fails closed. And `contains()` is formatting-blind, since a GitHub
+    # expression cannot strip Markdown -- a code-span mention still invokes the
+    # reusable workflow, whose mention-filter job then withholds the agent run
+    # (gha#554). Do not try to approximate CommonMark here.
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: write
+    uses: Morrison-Lab/gha/.github/workflows/claude.yml@v2
+    secrets: inherit
+    with:
+      setup-r: false
+      install-quarto: false
+      eager-pr: true
+      review-workflow-file: claude-review.yml

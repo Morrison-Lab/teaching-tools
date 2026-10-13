@@ -1,0 +1,23 @@
+# Thin caller of Morrison-Lab/gha's reusable workflow linter: actionlint
+# (syntax, expression semantics, shellcheck over `run:` blocks) plus zizmor
+# (security). Ported from d-morrison/rme.
+#
+# Blocking, because both tools report zero findings against this repo's
+# workflows as of this file's introduction, so a new finding means a new
+# problem rather than a backlog. `.github/zizmor.yml` accepts tag pins (and
+# `.github/dependabot.yml` keeps them current) while still flagging a branch
+# pin such as `@main`.
+name: Lint Workflows
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    permissions:
+      contents: read
+    uses: Morrison-Lab/gha/.github/workflows/lint-workflows.yml@v2
