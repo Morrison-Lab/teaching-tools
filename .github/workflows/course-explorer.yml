@@ -60,9 +60,11 @@ jobs:
         env:
           SINCE: ${{ inputs.since }}
           ALLOW_SHRINK: ${{ inputs.allow_shrink }}
-        run: >-
-          python3 scraper/scrape.py ${SINCE:+--since "$SINCE"}
-          $([ "$ALLOW_SHRINK" = true ] && echo --allow-shrink)
+        run: |
+          args=()
+          if [ -n "$SINCE" ]; then args+=(--since "$SINCE"); fi
+          if [ "$ALLOW_SHRINK" = true ]; then args+=(--allow-shrink); fi
+          python3 scraper/scrape.py "${args[@]}"
       - run: python3 scraper/build.py
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
