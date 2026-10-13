@@ -11,10 +11,11 @@ JSON endpoints that need no login. This script pulls:
 * the course catalog for the newest term into data/raw/catalog.json;
 * full course descriptions into data/raw/descriptions.json.
 
-Nothing here identifies a student: Banner's public search returns only
-section-level enrollment counts. Only each section's primary instructor is
-kept, by display name; secondary instructors (often student TAs), e-mail
-addresses and Banner IDs are dropped.
+Banner's public search returns no student records beyond section-level
+enrollment counts. Only each section's primary instructor (instructor of
+record) is kept, by display name; secondary instructors (often graduate TAs),
+e-mail addresses and Banner IDs are dropped. A graduate student who is the
+instructor of record still appears, as on WWU's own Browse Classes.
 
 Usage:
     python3 scraper/scrape.py                # this calendar year onward + catalog
@@ -61,15 +62,17 @@ class Banner:
         self.s = requests.Session()
         self.s.headers["User-Agent"] = USER_AGENT
 
-    def _req(self, method: str, path: str, **kw):
+    def _req(self, method: str, path: str, as_json: bool = False, **kw):
+        """Send a request, retrying server errors and unparseable JSON."""
         for attempt in range(5):
             try:
                 r = self.s.request(method, f"{BASE}/{path}", timeout=90, **kw)
                 if r.status_code in (429, 500, 502, 503, 504):
                     raise requests.HTTPError(f"HTTP {r.status_code}")
                 r.raise_for_status()
+                body = r.json() if as_json else r.text
                 time.sleep(self.delay)
-                return r
+                return body
             except (requests.RequestException, ValueError) as e:
                 wait = 2 ** (attempt + 1)
                 print(f"  retry {path} in {wait}s: {e}", file=sys.stderr)
@@ -77,35 +80,45 @@ class Banner:
         raise RuntimeError(f"giving up on {path}")
 
     def terms(self) -> list[dict]:
-        r = self._req("GET", "classSearch/getTerms",
-                      params={"searchTerm": "", "offset": 1, "max": 1000})
-        return r.json()
+        terms = self._req("GET", "classSearch/getTerms", as_json=True,
+                          params={"searchTerm": "", "offset": 1, "max": 1000})
+        return sorted(terms, key=lambda t: t["code"], reverse=True)
 
     def select_term(self, term: str, mode: str) -> None:
         self._req("POST", f"term/search?mode={mode}", data={"term": term})
 
-    def paged(self, path: str, term: str) -> list[dict]:
-        out, offset, total = [], 0, None
+    def paged(self, path: str, term: str, key: str) -> list[dict]:
+        """Fetch every page of a search, de-duplicated on `key`.
+
+        Raises if Banner reports failure or the rows don't add up to its
+        totalCount, so a bad response never replaces good data on disk.
+        """
+        rows: dict[str, dict] = {}
+        offset, total = 0, None
         while total is None or offset < total:
-            r = self._req("GET", path, params={
+            r = self._req("GET", path, as_json=True, params={
                 "txt_term": term, "pageOffset": offset, "pageMaxSize": PAGE,
                 "sortColumn": "subjectDescription", "sortDirection": "asc",
-            }).json()
-            if not r.get("success", True) and not r.get("data"):
-                break
+            })
+            if r.get("success") is False:
+                raise RuntimeError(f"{path} {term}: Banner reported failure")
             total = r.get("totalCount") or 0
             data = r.get("data") or []
             if not data:
                 break
-            out.extend(data)
+            for d in data:
+                rows[str(d.get(key))] = d
             offset += len(data)
-        return out
+        if len(rows) != total:
+            raise RuntimeError(f"{path} {term}: got {len(rows)} unique rows, "
+                               f"Banner reported {total}")
+        return list(rows.values())
 
     def description(self, term: str, subj: str, num: str) -> str:
-        r = self._req("POST", "courseSearchResults/getCourseDescription",
-                      data={"term": term, "subjectCode": subj,
-                            "courseNumber": num})
-        return clean_html(r.text)
+        text = self._req("POST", "courseSearchResults/getCourseDescription",
+                         data={"term": term, "subjectCode": subj,
+                               "courseNumber": num})
+        return clean_html(text)
 
 
 def clean_html(text: str) -> str:
@@ -121,9 +134,9 @@ def days(mt: dict) -> str:
 
 
 def trim_section(d: dict, attr_names: dict) -> dict:
-    # Only the primary instructor is kept. Banner also lists secondary
-    # instructors, who are often graduate teaching assistants: students, whose
-    # names this project never stores (see AGENTS.md).
+    # Only the primary instructor (instructor of record) is kept. Banner also
+    # lists secondary instructors, who are often graduate teaching
+    # assistants, so they are dropped (see AGENTS.md).
     faculty = [f for f in d.get("faculty") or [] if f.get("primaryIndicator")]
     meetings = []
     for m in d.get("meetingsFaculty") or []:
@@ -159,9 +172,12 @@ def load_json(path: Path, default):
 
 
 def dump_json(path: Path, obj) -> None:
+    """Write JSON atomically, so an interrupted run leaves the old file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, ensure_ascii=False, separators=(",", ":"),
-                               sort_keys=False) + "\n")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, separators=(",", ":"),
+                              sort_keys=False) + "\n")
+    tmp.replace(path)
 
 
 def scrape_terms(args) -> list[dict]:
@@ -181,10 +197,18 @@ def scrape_terms(args) -> list[dict]:
     for code in dict.fromkeys(wanted):
         b = Banner(args.delay)
         b.select_term(code, "search")
-        rows = b.paged("searchResults/searchResults", code)
+        rows = b.paged("searchResults/searchResults", code,
+                       key="courseReferenceNumber")
         sections = [trim_section(d, attr_names) for d in rows]
         sections.sort(key=lambda s: (s["subj"], s["num"], s["seq"] or ""))
-        dump_json(SECTIONS / f"{code}.json", sections)
+        path = SECTIONS / f"{code}.json"
+        old = len(load_json(path, []))
+        if old and len(sections) < old // 2:
+            # Sections get cancelled, but losing over half of a term at once
+            # means a bad response, not a schedule change.
+            raise RuntimeError(f"{code}: {len(sections)} sections, down from "
+                               f"{old}; keeping the old file")
+        dump_json(path, sections)
         print(f"{code}: {len(sections)} sections", file=sys.stderr)
     dump_json(attr_path, dict(sorted(attr_names.items())))
     return terms
@@ -194,7 +218,7 @@ def scrape_catalog(args, terms: list[dict]) -> None:
     term = terms[0]["code"]
     b = Banner(args.delay)
     b.select_term(term, "courseSearch")
-    rows = b.paged("courseSearchResults/courseSearchResults", term)
+    rows = b.paged("courseSearchResults/courseSearchResults", term, key="id")
     catalog = [{
         "subj": d["subject"],
         "num": d["courseNumber"],
@@ -229,11 +253,19 @@ def scrape_catalog(args, terms: list[dict]) -> None:
     dump_json(desc_path, dict(sorted(descs.items())))
 
 
+def term_code(value: str) -> str:
+    if not re.fullmatch(r"\d{4}[1-4]0", value):
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not a term code like 202640")
+    return value
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--terms", nargs="+", help="term codes to (re)download")
-    p.add_argument("--since", default=f"{date.today().year}10",
+    p.add_argument("--terms", nargs="+", type=term_code, help="term codes to (re)download")
+    p.add_argument("--since", type=term_code,
+                   default=f"{date.today().year}10",
                    help="first term code to download (default: Winter of "
                         "this calendar year)")
     p.add_argument("--all-terms", action="store_true",

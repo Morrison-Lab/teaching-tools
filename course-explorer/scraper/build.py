@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import csv
 import json
+import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -94,14 +96,21 @@ def main() -> None:
     syllabi_path = ROOT / "data" / "syllabi.csv"
     if syllabi_path.exists():
         with syllabi_path.open(newline="") as f:
-            rows = [r for r in csv.DictReader(
-                line for line in f if not line.startswith("#"))]
-        for r in rows:
-            key = " ".join(r["course"].split()).upper()
-            if key in courses and r.get("url"):
-                courses[key]["syllabi"].append(
-                    {k: r.get(k, "") for k in
-                     ("term", "instructor", "url", "label")})
+            rows = list(csv.DictReader(
+                line for line in f if not line.startswith("#")))
+        for n, r in enumerate(rows, 1):
+            key = " ".join((r.get("course") or "").split()).upper()
+            url = (r.get("url") or "").strip()
+            if not re.match(r"https?://", url, re.I):
+                sys.exit(f"syllabi.csv row {n}: url must start with "
+                         f"http:// or https:// (got {url!r})")
+            if key not in courses:
+                print(f"warning: syllabi.csv row {n}: no course {key!r}",
+                      file=sys.stderr)
+                continue
+            courses[key]["syllabi"].append(
+                {k: (r.get(k) or "").strip() for k in
+                 ("term", "instructor", "url", "label")})
 
     ordered = sorted(courses.values(), key=lambda c: (c["subj"], c["num"]))
     out = {

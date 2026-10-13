@@ -10,7 +10,7 @@ and see every section of a course in the loaded terms, with its instructor, meet
 
 | Source | What it gives | How |
 |---|---|---|
-| [Browse Classes](https://registration.banner.wwu.edu/StudentRegistrationSsb/ssb/term/termSelection?mode=search) (Ellucian Banner 9) | Sections for every term from Fall 2002 on: instructor, times, rooms, enrollment, delivery, attributes; the course catalog with college, department and descriptions | Public JSON endpoints, no login |
+| [Browse Classes](https://registration.banner.wwu.edu/StudentRegistrationSsb/ssb/term/termSelection?mode=search) (Ellucian Banner 9) | Sections for any term back to Fall 2002: instructor, times, rooms, enrollment, delivery, attributes; the course catalog with college, department and descriptions | Public JSON endpoints, no login |
 | [University Catalog](https://catalog.wwu.edu/) (Acalog) | Official course pages | Linked from each course; the site blocks scripted requests, so it is not scraped |
 | [`data/syllabi.csv`](data/syllabi.csv) | Syllabus and course-material links | Curated by hand |
 
@@ -22,9 +22,10 @@ Earlier terms are one flag away (`--since 201840`, or `--all-terms` for everythi
 ### Privacy
 
 Banner's public search has no student data beyond section enrollment counts.
-The scraper keeps only each section's primary instructor, by name.
-It drops secondary instructors, who are often student teaching assistants,
+The scraper keeps only each section's primary instructor (the instructor of record), by name.
+It drops secondary instructors, who are often graduate teaching assistants,
 and instructor e-mail addresses and Banner IDs.
+A graduate student who is the instructor of record still appears, as on WWU's own Browse Classes.
 
 ## Run it locally
 
@@ -35,8 +36,8 @@ python3 scraper/build.py       # -> site/data/courses.json
 python3 -m http.server -d site 8000
 ```
 
-The first run fetches about 5,000 course descriptions one at a time and takes a couple of hours;
-later runs fetch only new courses.
+Course descriptions are fetched one at a time (about 1.5 seconds each) and cached in
+`data/raw/descriptions.json`, which is committed, so a run fetches only courses missing from it.
 `--max-descriptions N` caps that for a quick test.
 
 ## Publishing
@@ -45,6 +46,13 @@ later runs fetch only new courses.
 re-scrapes daily, rebuilds, and deploys `site/` to GitHub Pages.
 It needs **Settings > Pages > Source: GitHub Actions** turned on once.
 Run it by hand from the Actions tab, optionally with a `since` term code to load more history.
+
+Downloaded terms carry over between runs in the Actions cache, not in git.
+If that cache is evicted (GitHub drops caches unused for 7 days),
+the next run rebuilds from `since` only, and older terms loaded by hand drop off the site
+until a run with that `since` is repeated.
+A term whose new download has under half the sections of the cached copy fails the run
+and keeps the old data, instead of publishing a truncated schedule.
 
 ## Adding syllabi
 

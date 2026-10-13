@@ -15,7 +15,9 @@ on:
   push:
     branches: [main]
     paths:
-      - "course-explorer/**"
+      - "course-explorer/scraper/**"
+      - "course-explorer/site/**"
+      - "course-explorer/data/syllabi.csv"
       - ".github/workflows/course-explorer.yml"
 
 permissions: {}
@@ -41,13 +43,14 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install requests
-      # Past terms and fetched descriptions carry over between runs, so a
+      # Past terms, descriptions and attribute names carry over between runs, so a
       # daily run only re-downloads recent terms and new courses.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             course-explorer/data/raw/sections
             course-explorer/data/raw/descriptions.json
+            course-explorer/data/raw/attributes.json
           key: course-raw-${{ github.run_id }}
           restore-keys: course-raw-
       - name: Download from Banner

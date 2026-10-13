@@ -127,14 +127,15 @@
   }
 
   // ---------- rendering ----------
+  // Marks query words at word starts. Splits the raw text and escapes each
+  // piece, so a match can never land inside an HTML entity.
   function highlight(text) {
-    const q = els.q.value.trim();
-    const safe = esc(text);
-    if (!q) return safe;
-    const words = q.split(/\s+/).filter((w) => w.length > 2)
+    const raw = String(text ?? "");
+    const words = els.q.value.trim().split(/\s+/).filter((w) => w.length > 2)
       .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    if (!words.length) return safe;
-    return safe.replace(new RegExp(`\\b(${words.join("|")})`, "gi"), "<mark>$1</mark>");
+    if (!words.length) return esc(raw);
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])(${words.join("|")})`, "giu");
+    return raw.split(re).map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part))).join("");
   }
 
   function chips(c) {
@@ -188,7 +189,7 @@
     const isOpen = open.has(c.id);
     const attrs = c.attrs.filter((a) => /^(GUR|WP|CF|SL|ZTC|LTC)/.test(data.attributes[a] || a) || /^(WP\d|ZTC|LTC|CF|SL)$/.test(a))
       .map((a) => `<span class="attr" title="${esc(data.attributes[a] || a)}">${esc(a)}</span>`).join(" ");
-    const meta = [c.subjDesc || c.subj, c.cred ? `${c.cred} credits` : "", c.dept && c.dept !== c.subjDesc ? c.dept : ""]
+    const meta = [c.subjDesc || c.subj, c.cred ? `${c.cred} credit${c.cred === "1" ? "" : "s"}` : "", c.dept && c.dept !== c.subjDesc ? c.dept : ""]
       .filter(Boolean).map(esc).join(" · ");
     return `<li class="course" data-id="${esc(c.id)}">
       <h2><button type="button" aria-expanded="${isOpen}">
@@ -213,7 +214,10 @@
 
   function rerenderOne(id) {
     const li = els.results.querySelector(`li[data-id="${CSS.escape(id)}"]`);
-    if (li) li.outerHTML = courseHTML(byId.get(id));
+    if (!li) return;
+    li.outerHTML = courseHTML(byId.get(id));
+    // outerHTML replaced the focused button; give focus to its replacement.
+    els.results.querySelector(`li[data-id="${CSS.escape(id)}"] h2 button`)?.focus();
   }
 
   // ---------- setup ----------
@@ -227,6 +231,9 @@
   }
 
   async function init() {
+    if (typeof MiniSearch === "undefined") {
+      throw new Error("the search library did not load from cdn.jsdelivr.net");
+    }
     const res = await fetch("data/courses.json");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     data = await res.json();
@@ -234,9 +241,16 @@
     termName = new Map(data.terms.map((t) => [t.code, t.name]));
 
     const subjects = new Map();
-    data.courses.forEach((c) => subjects.set(c.subj, c.subjDesc || c.subj));
-    fillSelect(els.subj, [...subjects].sort((a, b) => a[1].localeCompare(b[1]))
-      .map(([k, v]) => [k, `${v} (${k})`]));
+    // Keep the first non-empty subject name; courses known only from
+    // sections have none.
+    data.courses.forEach((c) => {
+      if (!subjects.get(c.subj)) subjects.set(c.subj, c.subjDesc || "");
+    });
+    fillSelect(els.subj, [...subjects].map(([k, v]) => [k, v ? `${v} (${k})` : k])
+      .sort((a, b) => a[1].localeCompare(b[1])));
+    const levels = [...new Set(data.courses.map((c) => c.level).filter((l) => l !== null))].sort((a, b) => a - b);
+    fillSelect(els.level, levels.map((l) =>
+      [String(l), l === 0 ? "Below 100" : l >= 500 ? `${l} (graduate)` : String(l)]));
     fillSelect(els.term, data.terms.map((t) => [t.code, t.name]));
     const usedAttrs = new Set(data.courses.flatMap((c) => c.attrs));
     fillSelect(els.attr, Object.entries(data.attributes).filter(([k]) => usedAttrs.has(k))

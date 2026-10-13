@@ -35,5 +35,5 @@ Scripts read it themselves; never print it, copy it into a file or an environmen
 
 [`course-explorer/`](course-explorer/) reads only WWU's public class schedule and catalog, not Canvas,
 so agents may run its scripts.
-It keeps each section's primary instructor and drops secondary instructors,
-who are often student teaching assistants; keep it that way.
+It keeps each section's primary instructor (instructor of record) and drops secondary instructors,
+who are often graduate teaching assistants; keep it that way.
