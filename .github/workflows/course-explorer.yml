@@ -1,0 +1,84 @@
+name: Course explorer
+
+# Refreshes the WWU course data from Banner and publishes course-explorer/site
+# to GitHub Pages. Needs Settings > Pages > Source set to "GitHub Actions".
+
+on:
+  schedule:
+    - cron: "17 13 * * *" # daily, 06:17 Pacific (PDT)
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "First term code to download (e.g. 202610); blank = this calendar year"
+        required: false
+        default: ""
+      allow_shrink:
+        description: "Accept a term that lost over half its sections (a real drop)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "course-explorer/scraper/**"
+      - "course-explorer/site/**"
+      - "course-explorer/data/syllabi.csv"
+      - ".github/workflows/course-explorer.yml"
+
+permissions: {}
+
+concurrency:
+  group: course-explorer
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: course-explorer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - run: pip install requests
+      # Past terms carry over between runs, so a daily run only re-downloads
+      # recent ones. descriptions.json and attributes.json are committed seeds
+      # and stay out of the cache, so an edit to them in git is not overwritten
+      # by an older cached copy.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: course-explorer/data/raw/sections
+          key: course-raw-${{ github.run_id }}
+          restore-keys: course-raw-
+      - name: Download from Banner
+        env:
+          SINCE: ${{ inputs.since }}
+          ALLOW_SHRINK: ${{ inputs.allow_shrink }}
+        run: >-
+          python3 scraper/scrape.py ${SINCE:+--since "$SINCE"}
+          $([ "$ALLOW_SHRINK" = true ] && echo --allow-shrink)
+      - run: python3 scraper/build.py
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: course-explorer/site
+
+  deploy:
+    needs: build
+    # Only main publishes; a manual run on another branch just builds.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

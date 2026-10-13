@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WWU Course Explorer</title>
+  <meta name="description" content="Search Western Washington University courses by title, keyword, instructor and department, and see when and by whom they are offered.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1>WWU Course Explorer</h1>
+      <p class="sub">Search Western Washington University courses and see when they are offered and who teaches them.</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <form id="search" class="search" role="search" onsubmit="return false">
+      <label class="q">
+        <span class="visually-hidden">Search courses</span>
+        <input id="q" type="search" placeholder="Search by course code, title, keyword or instructor (e.g. &quot;CSCI 241&quot;, &quot;epidemiology&quot;, &quot;Smith&quot;)" autocomplete="off" autofocus>
+      </label>
+      <div class="filters">
+        <label>Subject
+          <select id="f-subj"><option value="">All subjects</option></select>
+        </label>
+        <label>Offered
+          <select id="f-term">
+            <option value="">Any time</option>
+            <option value="any">In any listed term</option>
+            <option value="none">Not in listed terms</option>
+          </select>
+        </label>
+        <label>Level
+          <select id="f-level"><option value="">All levels</option></select>
+        </label>
+        <label>Attribute
+          <select id="f-attr"><option value="">Any (GUR, writing, ...)</option></select>
+        </label>
+        <label>Delivery
+          <select id="f-method"><option value="">Any delivery</option></select>
+        </label>
+        <label>Instructor
+          <input id="f-instr" type="text" list="instructors" placeholder="Last name">
+          <datalist id="instructors"></datalist>
+        </label>
+        <button id="reset" type="button" class="link">Clear</button>
+      </div>
+    </form>
+
+    <p id="status" class="status" aria-live="polite">Loading courses...</p>
+    <ol id="results" class="results"></ol>
+    <button id="more" type="button" class="more" hidden>Show more</button>
+  </main>
+
+  <footer class="wrap foot">
+    <p>
+      Data from WWU's public <a href="https://registration.banner.wwu.edu/StudentRegistrationSsb/ssb/term/termSelection?mode=search">Browse Classes</a>
+      and the <a href="https://catalog.wwu.edu/">University Catalog</a>, refreshed automatically.
+      <span id="updated"></span>
+      Not an official WWU site; check Browse Classes before registering.
+      <a href="https://github.com/Morrison-Lab/teaching-tools/tree/main/course-explorer">Source and syllabus links</a>.
+    </p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/minisearch@7.1.1/dist/umd/index.min.js"
+    integrity="sha384-NaG2onw11DFACpXdRQsBdEloX/dyoVXm8MLdKo0dHSA3SGZU8R7B5IJHI4D0ofwR"
+    crossorigin="anonymous"></script>
+  <script src="app.js"></script>
+</body>
+</html>

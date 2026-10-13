@@ -1,0 +1,5 @@
+# Syllabus and course-material links shown in the explorer.
+# One row per link. course is "SUBJ NUM" as Banner writes it (e.g. "EPI 204").
+# term (e.g. 202640) and instructor are optional; label defaults to "Syllabus".
+# Only link pages that are public; never link a page that names students.
+course,term,instructor,url,label

@@ -1,1 +1,8 @@
 __pycache__/
+
+# course-explorer: downloaded and built data (the Pages workflow regenerates
+# it); descriptions.json and attributes.json are kept as seeds for a fresh run.
+course-explorer/data/raw/*
+!course-explorer/data/raw/descriptions.json
+!course-explorer/data/raw/attributes.json
+course-explorer/site/data/
