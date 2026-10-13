@@ -194,6 +194,7 @@ def scrape_terms(args) -> list[dict]:
         wanted = in_range[:RECENT_TERMS] + [c for c in in_range if c not in have]
     attr_path = RAW / "attributes.json"
     attr_names = load_json(attr_path, {})
+    kept_old = []
     for code in dict.fromkeys(wanted):
         b = Banner(args.delay)
         b.select_term(code, "search")
@@ -203,14 +204,17 @@ def scrape_terms(args) -> list[dict]:
         sections.sort(key=lambda s: (s["subj"], s["num"], s["seq"] or ""))
         path = SECTIONS / f"{code}.json"
         old = len(load_json(path, []))
-        if old and len(sections) < old // 2:
+        if old and len(sections) < old // 2 and not args.allow_shrink:
             # Sections get cancelled, but losing over half of a term at once
-            # means a bad response, not a schedule change.
-            raise RuntimeError(f"{code}: {len(sections)} sections, down from "
-                               f"{old}; keeping the old file")
+            # more likely means a bad response than a schedule change.
+            print(f"{code}: {len(sections)} sections, down from {old}; "
+                  "keeping the old file", file=sys.stderr)
+            kept_old.append(code)
+            continue
         dump_json(path, sections)
         print(f"{code}: {len(sections)} sections", file=sys.stderr)
     dump_json(attr_path, dict(sorted(attr_names.items())))
+    args.kept_old = kept_old
     return terms
 
 
@@ -270,6 +274,8 @@ def main() -> None:
                         "this calendar year)")
     p.add_argument("--all-terms", action="store_true",
                    help="download every term Banner lists, ignoring --since")
+    p.add_argument("--allow-shrink", action="store_true",
+                   help="accept a term losing over half its sections")
     p.add_argument("--skip-sections", action="store_true")
     p.add_argument("--skip-catalog", action="store_true")
     p.add_argument("--refresh-descriptions", action="store_true")
@@ -283,6 +289,11 @@ def main() -> None:
         terms = scrape_terms(args)
     if not args.skip_catalog:
         scrape_catalog(args, terms)
+    # Fail only after everything else is saved, so one suspicious term doesn't
+    # block the rest of the refresh.
+    if getattr(args, "kept_old", None):
+        sys.exit(f"kept old data for {', '.join(args.kept_old)} after a large "
+                 "drop in sections; rerun with --allow-shrink if it is real")
 
 
 if __name__ == "__main__":

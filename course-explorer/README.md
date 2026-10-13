@@ -51,8 +51,10 @@ Downloaded terms carry over between runs in the Actions cache, not in git.
 If that cache is evicted (GitHub drops caches unused for 7 days),
 the next run rebuilds from `since` only, and older terms loaded by hand drop off the site
 until a run with that `since` is repeated.
-A term whose new download has under half the sections of the cached copy fails the run
-and keeps the old data, instead of publishing a truncated schedule.
+If a term's new download has under half the sections of the cached copy,
+the scraper keeps the old copy, finishes the other terms, and then fails the run,
+so a truncated schedule is never published.
+Run `scrape.py --allow-shrink` locally if the drop is real.
 
 ## Adding syllabi
 

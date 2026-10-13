@@ -134,8 +134,10 @@
     const words = els.q.value.trim().split(/\s+/).filter((w) => w.length > 2)
       .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
     if (!words.length) return esc(raw);
-    const re = new RegExp(`(?<![\\p{L}\\p{N}])(${words.join("|")})`, "giu");
-    return raw.split(re).map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part))).join("");
+    // A capture group for the preceding character instead of a lookbehind,
+    // which older Safari lacks. split() yields [text, prefix, word, ...].
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}])(${words.join("|")})`, "giu");
+    return raw.split(re).map((part, i) => (i % 3 === 2 ? `<mark>${esc(part)}</mark>` : esc(part))).join("");
   }
 
   function chips(c) {
