@@ -79,6 +79,7 @@ def main() -> None:
             rec = course(s["subj"], s["num"])
             rec["title"] = rec["title"] or s["title"]
             rec["cred"] = rec["cred"] or credits(*s["cred"])
+            rec["desc"] = rec["desc"] or descs.get(rec["id"], "")
             if term not in rec["offered"]:
                 rec["offered"].append(term)
             course_attrs[rec["id"]].update(s["attrs"])

@@ -54,7 +54,7 @@ until a run with that `since` is repeated.
 If a term's new download has under half the sections of the cached copy,
 the scraper keeps the old copy, finishes the other terms, and then fails the run,
 so a truncated schedule is never published.
-Run `scrape.py --allow-shrink` locally if the drop is real.
+If the drop is real, run the workflow by hand with **allow_shrink** checked.
 
 ## Adding syllabi
 
