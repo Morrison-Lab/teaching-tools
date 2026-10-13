@@ -165,7 +165,7 @@
           <td>${esc(s.type || "")}</td>
           <td class="wrap-ok">${s.mtg.length ? s.mtg.map((m) => esc(meetingText(m))).join("<br>") : "TBA"}</td>
           <td class="wrap-ok">${s.instr.length ? s.instr.map(esc).join("<br>") : "Staff"}</td>
-          <td class="${full ? "full" : "open"}">${s.enr ?? ""}/${s.max ?? ""}</td>
+          <td class="${full ? "full" : "open"}">${esc(s.enr ?? "")}/${esc(s.max ?? "")}</td>
           <td>${esc(data.methods[s.method] || s.method || "")}</td>
         </tr>`);
       }

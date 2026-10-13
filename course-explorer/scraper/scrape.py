@@ -69,6 +69,10 @@ class Banner:
                 r = self.s.request(method, f"{BASE}/{path}", timeout=90, **kw)
                 if r.status_code in (429, 500, 502, 503, 504):
                     raise requests.HTTPError(f"HTTP {r.status_code}")
+                if 400 <= r.status_code < 500:
+                    # A client error won't fix itself; fail now, not after
+                    # minutes of backoff.
+                    raise RuntimeError(f"{path}: HTTP {r.status_code}")
                 r.raise_for_status()
                 body = r.json() if as_json else r.text
                 time.sleep(self.delay)
@@ -236,6 +240,10 @@ def scrape_catalog(args, terms: list[dict]) -> None:
         "short": html.unescape(d.get("courseDescription") or ""),
     } for d in rows]
     catalog.sort(key=lambda c: (c["subj"], c["num"]))
+    old = len(load_json(RAW / "catalog.json", []))
+    if old and len(catalog) < old // 2 and not args.allow_shrink:
+        sys.exit(f"catalog: {len(catalog)} courses, down from {old}; keeping "
+                 "the old file (rerun with --allow-shrink if it is real)")
     dump_json(RAW / "catalog.json", catalog)
     print(f"catalog {term}: {len(catalog)} courses", file=sys.stderr)
 

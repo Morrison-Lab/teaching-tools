@@ -123,7 +123,9 @@ def main() -> None:
         "courses": ordered,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
+    tmp = OUT.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
+    tmp.replace(OUT)
     n_sections = sum(len(c["sections"]) for c in ordered)
     print(f"{len(ordered)} courses, {n_sections} sections, "
           f"{len(loaded_terms)} terms -> {OUT.relative_to(ROOT)} "
