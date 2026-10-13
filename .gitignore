@@ -1,1 +1,7 @@
 __pycache__/
+
+# course-explorer: downloaded and built data (the Pages workflow regenerates
+# it); descriptions.json is kept as a seed so a fresh run need not refetch all.
+course-explorer/data/raw/*
+!course-explorer/data/raw/descriptions.json
+course-explorer/site/data/
