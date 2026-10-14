@@ -1,0 +1,20 @@
+# Thin caller of Morrison-Lab/gha's reusable semantic-line-break check.
+#
+# Flags newly added prose lines that pack more than one sentence onto one
+# source line. It is diff-scoped, so it reads only the lines a PR adds. There
+# is no `push` or `workflow_dispatch` trigger: neither has a PR base to diff
+# against, so the reusable workflow would skip having checked nothing.
+#
+# Warn-only until it has run clean on a few PRs here.
+name: Check new markdown lines for missing semantic breaks
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    permissions:
+      contents: read
+    uses: Morrison-Lab/gha/.github/workflows/check-new-line-breaks.yml@v2
+    with:
+      fail: false
