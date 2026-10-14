@@ -64,9 +64,7 @@ jobs:
         ## What this repository is
 
         Scripts and small tools for teaching: a Canvas assignment sync, a
-        Canvas recon script, an exercise-assignment generator, and
-        `course-explorer/`, a static search site over WWU's public class
-        schedule with a scraper and a daily Pages workflow.
+        Canvas recon script, and an exercise-assignment generator.
 
         ## Check these before anything else
 
@@ -74,9 +72,7 @@ jobs:
            Canvas, and `studentwork.py` (which downloads submissions) is never
            run by an agent; see AGENTS.md. Flag a diff that adds student data,
            or code that calls a Canvas endpoint, passes a flag, or requests an
-           `include[]` value returning student records. In `course-explorer/`,
-           flag anything that stores secondary instructors (often graduate
-           TAs), e-mail addresses or Banner IDs.
+           `include[]` value returning student records.
         2. **Secrets.** Canvas API tokens are used here. Flag anything that
            looks like a real token rather than a placeholder.
         3. **Accuracy of tool claims.** Command names, flags, and Canvas or
