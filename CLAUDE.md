@@ -20,3 +20,7 @@ configured by `.github/zizmor.yml`), and the warn-only `check-new-line-breaks.ym
 The WWU course explorer moved to [`Morrison-Lab/swc`](https://github.com/Morrison-Lab/swc).
 
 `.claude/settings.json` enables the lab's `ai-config` plugin for Claude Code sessions here.
+It also allows `canvas/upload_module_files.py`, so uploads that Ezra's deliverable asks already cover do not wait for a typed "go".
+A project-level rule applies only when the session's working directory is this checkout,
+so start a Canvas upload session here (on cf463-02, `/home/morri313/Documents/GitHub/teaching-tools`)
+and run the script by the relative path `canvas/upload_module_files.py`.

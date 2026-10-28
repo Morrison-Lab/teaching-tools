@@ -11,6 +11,13 @@
     "ai-config@Morrison-Lab": true
   },
   "permissions": {
+    "allow": [
+      "Bash(uv run canvas/upload_module_files.py:*)",
+      "Bash(python3 canvas/upload_module_files.py:*)",
+      "Bash(./canvas/upload_module_files.py:*)",
+      "Bash(uv run /home/morri313/Documents/GitHub/teaching-tools/canvas/upload_module_files.py:*)",
+      "Bash(uv run /Users/ezramorrison/Documents/GitHub/teaching-tools/canvas/upload_module_files.py:*)"
+    ],
     "deny": [
       "Bash(python studentwork.py:*)",
       "Bash(python3 studentwork.py:*)",
