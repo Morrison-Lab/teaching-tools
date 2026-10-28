@@ -6,7 +6,7 @@
 # ]
 # ///
 """
-Create, update or remove Canvas course calendar events from a YAML events file.
+Create, update or remove Canvas course calendar events from a YAML (or JSON, which is valid YAML) events file.
 Course-agnostic: the course's own repository holds the events file.
 
 Run it again and nothing changes unless the file changed. Each event the
