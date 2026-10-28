@@ -23,7 +23,8 @@ No LLM account we use is approved for that data.
 ## Canvas writes
 
 Students see a change to the live course the moment it lands.
-Run [`canvas/sync_assignments.py`](canvas/sync_assignments.py) as a dry run first,
+Run [`canvas/sync_assignments.py`](canvas/sync_assignments.py)
+and [`canvas/sync_calendar.py`](canvas/sync_calendar.py) as a dry run first,
 and add `--apply` only after the instructor approves that run.
 
 ## Canvas token

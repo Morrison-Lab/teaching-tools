@@ -4,7 +4,8 @@ Read [AGENTS.md](AGENTS.md) before running anything here.
 In particular, never run `studentwork.py`: it downloads student submissions (FERPA).
 
 Test the assignment sync with `python3 canvas/tests/test_sync_assignments.py`,
-and the module file upload with `python3 canvas/tests/test_upload_module_files.py`.
+the module file upload with `python3 canvas/tests/test_upload_module_files.py`,
+and the calendar sync with `python3 canvas/tests/test_sync_calendar.py`.
 
 ## CI
 
