@@ -9,7 +9,7 @@ and the calendar sync with `python3 canvas/tests/test_sync_calendar.py`.
 
 ## CI
 
-`tests.yml` runs the assignment sync self-test.
+`tests.yml` runs the assignment sync and calendar sync self-tests.
 The rest are thin callers of reusable workflows in
 [`Morrison-Lab/gha`](https://github.com/Morrison-Lab/gha), pinned at `@v2`, copied from
 `Morrison-Lab/canvas`: `claude-review.yml` (automated PR review), `claude-bot.yml`
