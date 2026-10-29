@@ -27,3 +27,5 @@ jobs:
       - run: pip install pyyaml
       - name: Canvas assignment sync self-test
         run: python3 canvas/tests/test_sync_assignments.py
+      - name: Canvas calendar sync self-test
+        run: python3 canvas/tests/test_sync_calendar.py
