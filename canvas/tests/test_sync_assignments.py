@@ -157,6 +157,44 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(payload["due_at"], "2026-10-15T06:59:00+00:00")
         self.assertNotIn("_source", payload)
 
+    def test_solution_releases_at_lock_at_by_default(self):
+        d = self.tmp.name
+        write(d, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  due_at: 2026-11-05T23:59:00-08:00\n"
+            "  lock_at: 2026-11-06T23:59:00-08:00\n"
+            "  solution: key/{stem}.pdf\n---\nbody\n"
+        ))
+        _, wanted = sa.wanted_assignments(self.config)
+        hw3 = [w for w in wanted if w["name"] == "Homework 3"][0]
+        self.assertEqual(hw3["solution"], Path(d).resolve() / "key" / "hw3.pdf")
+        self.assertEqual(hw3["solution_unlock_at"], hw3["lock_at"])
+
+    def test_solution_unlock_at_overrides_lock_at(self):
+        write(self.tmp.name, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  lock_at: 2026-11-06T23:59:00-08:00\n"
+            "  solution: k.pdf\n"
+            "  solution_unlock_at: 2026-11-07T12:00:00-08:00\n---\nbody\n"
+        ))
+        _, wanted = sa.wanted_assignments(self.config)
+        hw3 = [w for w in wanted if w["name"] == "Homework 3"][0]
+        self.assertEqual(
+            hw3["solution_unlock_at"],
+            dt.datetime(2026, 11, 7, 20, 0, tzinfo=dt.timezone.utc),
+        )
+
+    def test_solution_without_any_release_time_is_refused(self):
+        write(self.tmp.name, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n  solution: k.pdf\n---\nbody\n"
+        ))
+        with self.assertRaises(ValueError):
+            sa.wanted_assignments(self.config)
+
+    def test_solution_is_never_in_the_api_payload(self):
+        payload = sa.to_api({"solution": Path("k.pdf"), "name": "x"})
+        self.assertNotIn("solution", payload)
+
 
 if __name__ == "__main__":
     unittest.main()
