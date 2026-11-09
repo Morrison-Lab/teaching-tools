@@ -21,9 +21,10 @@ unpublished unless --allow-unpublish is given.
 
 Solutions: an optional `solution:` path in a file's `canvas:` block (or in
 `defaults`; `{stem}` as for attachments) uploads that answer key to the Canvas
-Files folder named by `solutions_folder` (default `Solutions`) and sets the
-file's `unlock_at`, so Canvas itself releases it to students at that time and
-no one has to remember to. The time is `solution_unlock_at` if given, else the
+Files folder `<solutions_folder>/<file stem>` (default `Solutions/hw3`) and
+sets the folder's and the file's `unlock_at`, so Canvas hides both from
+students until then and releases them itself, so no one has to remember to.
+The time is `solution_unlock_at` if given, else the
 assignment's `lock_at` (when submissions close). With neither, the script
 stops. The dry run lists each key and its release time; the key is never
 linked from the assignment. The release time is configurable per assignment
@@ -252,20 +253,26 @@ def upload_solutions(course, config, wanted):
     keys = [w for w in wanted if w.get("solution")]
     if not keys:
         return []
-    path = config.get("solutions_folder", "Solutions")
-    folder = find_folder(course, path)
-    if folder is None:
-        parent, _, name = path.strip("/").rpartition("/")
-        folder = course.create_folder(name, parent_folder_path=parent)
+    root = config.get("solutions_folder", "Solutions").strip("/")
     for item in keys:
         key = item["solution"]
+        release = item["solution_unlock_at"].isoformat()
+        # One folder per assignment, scheduled like its file: Canvas lists neither
+        # the folder nor the key's name to students before the release time.
+        path = f"{root}/{Path(item['_source']).stem}"
+        folder = find_folder(course, path)
+        if folder is None:
+            parent, _, name = path.rpartition("/")
+            folder = course.create_folder(
+                name, parent_folder_path=parent, unlock_at=release, hidden=False
+            )
+        else:
+            folder = folder.update(unlock_at=release)
         ok, response = folder.upload(str(key), on_duplicate="overwrite")
         if not ok:
             sys.exit(f"Upload of {key.name} failed: {response}")
-        # `response` holds the new file's attributes; lock it until its release time.
-        release = item["solution_unlock_at"].isoformat()
-        folder._requester.request(
-            "PUT", f"files/{response['id']}", unlock_at=release, locked=False, hidden=False
+        course.get_file(response["id"]).update(
+            unlock_at=release, locked=False, hidden=False
         )
         print(f"uploaded  {key.name}  (released {release})")
     return [w["solution"].name for w in keys]
