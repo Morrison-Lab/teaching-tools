@@ -27,7 +27,9 @@ Files folder `<solutions_folder>/<file stem>` (default `Solutions/hw3`) and
 having to remember to. Link the key from an assignment that opens at that
 time, such as the self-grade. The time is `solution_unlock_at` if given, else
 the assignment's `lock_at` (when submissions close). With neither, the script
-stops. The dry run lists each key and its release time. The release time is configurable per assignment
+stops. A PDF key also uploads the same-stem `.html` beside it (the
+self-contained HTML render), and the run stops if that file is missing.
+The dry run lists each key and its release time. The release time is configurable per assignment
 through `solution_unlock_at`.
 
 Usage:
@@ -254,8 +256,8 @@ def upload_solutions(course, config, wanted):
     if not keys:
         return []
     root = config.get("solutions_folder", "Solutions").strip("/")
+    names = []
     for item in keys:
-        key = item["solution"]
         release = item["solution_unlock_at"].isoformat()
         # Hidden folder and file: Canvas never lists them to students, and
         # unlock_at keeps the file from opening before the release time.
@@ -264,14 +266,31 @@ def upload_solutions(course, config, wanted):
         if folder is None:
             parent, _, name = path.rpartition("/")
             folder = course.create_folder(name, parent_folder_path=parent, hidden=True)
-        ok, response = folder.upload(str(key), on_duplicate="overwrite")
-        if not ok:
-            sys.exit(f"Upload of {key.name} failed: {response}")
-        course.get_file(response["id"]).update(
-            unlock_at=release, locked=False, hidden=True
-        )
-        print(f"uploaded  {key.name}  (released {release})")
-    return [w["solution"].name for w in keys]
+        for key in solution_files(item["solution"]):
+            ok, response = folder.upload(str(key), on_duplicate="overwrite")
+            if not ok:
+                sys.exit(f"Upload of {key.name} failed: {response}")
+            course.get_file(response["id"]).update(
+                unlock_at=release, locked=False, hidden=True
+            )
+            print(f"uploaded  {key.name}  (released {release})")
+            names.append(key.name)
+    return names
+
+
+def solution_files(key):
+    """The files to upload for an answer key: a PDF key brings its HTML twin.
+
+    Ezra, 2026-11-10: "so that students can examine 3d graphs in the
+    solutions files, we should start uploading html versions of the solutions
+    files in addition to the pdf versions, using the `embed-resources: true`
+    option" (teaching-tools#18). The HTML is the same-stem file beside the
+    PDF, rendered self-contained.
+    """
+    key = Path(key)
+    if key.suffix.lower() == ".pdf":
+        return [key, key.with_suffix(".html")]
+    return [key]
 
 
 def to_api(fields):
@@ -370,8 +389,8 @@ def main(argv=None):
     missing = [str(p) for w in wanted for p in w["attachments"] if not p.is_file()]
     if missing:
         sys.exit("Attachments not found (build them first):\n  " + "\n  ".join(missing))
-    absent = [str(w["solution"]) for w in wanted
-              if w.get("solution") and not w["solution"].is_file()]
+    absent = [str(f) for w in wanted if w.get("solution")
+              for f in solution_files(w["solution"]) if not f.is_file()]
     if absent:
         sys.exit("Solutions not found (render them first):\n  " + "\n  ".join(absent))
     intro = config.get("attachments_intro", "")
@@ -390,7 +409,8 @@ def main(argv=None):
         for w in wanted:
             if w.get("solution"):
                 when = w["solution_unlock_at"].isoformat()
-                print(f"would upload solution {w['solution'].name}, released {when}")
+                for f in solution_files(w["solution"]):
+                    print(f"would upload solution {f.name}, released {when}")
         report(steps)
         print("\nDry run: nothing was written. Re-run with --apply to write.")
         print("Attachment links show the files now in Canvas; uploading gives them new ids.")

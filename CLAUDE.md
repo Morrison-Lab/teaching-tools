@@ -7,6 +7,15 @@ Test the assignment sync with `python3 canvas/tests/test_sync_assignments.py`,
 the module file upload with `python3 canvas/tests/test_upload_module_files.py`,
 and the calendar sync with `python3 canvas/tests/test_sync_calendar.py`.
 
+## Answer keys go up as a PDF and an HTML file
+
+Ezra, 2026-11-10: "so that students can examine 3d graphs in the solutions files, we should start uploading html versions of the solutions files in addition to the pdf versions, using the `embed-resources: true` option"
+([teaching-tools#18](https://github.com/Morrison-Lab/teaching-tools/issues/18)).
+The HTML is the course repository's self-contained render of the key
+(mlg sets `embed-resources: true` in `_quarto-solution.yml`, [mlg#350](https://github.com/Morrison-Lab/mlg/issues/350)).
+`sync_assignments.py` uploads the same-stem `.html` beside a PDF `solution:` and stops if it is missing,
+and `upload_module_files.py` refuses a PDF whose path mentions "solution" unless its `.html` is passed too.
+
 ## CI
 
 `tests.yml` runs the assignment sync and calendar sync self-tests.

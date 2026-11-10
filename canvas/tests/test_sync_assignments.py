@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sync_assignments as sa  # noqa: E402
@@ -194,6 +195,45 @@ class SyncTest(unittest.TestCase):
     def test_solution_is_never_in_the_api_payload(self):
         payload = sa.to_api({"solution": Path("k.pdf"), "name": "x"})
         self.assertNotIn("solution", payload)
+
+    def test_pdf_key_brings_its_html(self):
+        self.assertEqual(
+            sa.solution_files(Path("key/hw3.pdf")),
+            [Path("key/hw3.pdf"), Path("key/hw3.html")],
+        )
+        self.assertEqual(sa.solution_files(Path("key/hw3.html")), [Path("key/hw3.html")])
+
+    def test_upload_solutions_uploads_pdf_and_html_locked(self):
+        uploads, updates = [], []
+
+        class Folder:
+            def upload(self, path, **kwargs):
+                uploads.append(Path(path).name)
+                return True, {"id": len(uploads)}
+
+        class File:
+            def update(self, **kwargs):
+                updates.append(kwargs)
+
+        class Course:
+            def get_folders(self):
+                return []
+
+            def create_folder(self, name, **kwargs):
+                return Folder()
+
+            def get_file(self, file_id):
+                return File()
+
+        when = dt.datetime(2026, 11, 7, tzinfo=dt.timezone.utc)
+        wanted = [{"solution": Path("k/hw3.pdf"), "solution_unlock_at": when,
+                   "_source": "hw3.qmd"}]
+        with mock.patch.object(sa, "find_folder", return_value=None):
+            names = sa.upload_solutions(Course(), {}, wanted)
+        self.assertEqual(names, ["hw3.pdf", "hw3.html"])
+        self.assertEqual(uploads, ["hw3.pdf", "hw3.html"])
+        self.assertTrue(all(u["unlock_at"] == when.isoformat() and u["hidden"]
+                            for u in updates))
 
 
 if __name__ == "__main__":
