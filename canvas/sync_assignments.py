@@ -31,13 +31,14 @@ stops. The dry run lists each key and its release time. The release time is conf
 through `solution_unlock_at`.
 
 Self-grade: an optional `self_grade:` block in a file's `canvas:` block
-(`name`, `due_at`, `points_possible`, optional `description`) makes a second
+(`name`, required; `due_at`, `points_possible` and `description`, optional) makes a second
 assignment that opens, published, at the homework's `lock_at` (its `unlock_at`)
 and links the homework's `solution:` key in its description, like the
 attachments above. A self-grade tells students to use the posted solutions, so
 the key is uploaded before any assignment is written, and a `self_grade:` with
 no `solution:` or no `lock_at` is refused. The key is then shared through the
-self-grade, so it is not also put in the Solutions folder.
+self-grade, so it is not also put in the Solutions folder; its file is locked
+until the self-grade opens.
 
 Usage:
     uv run sync_assignments.py path/to/canvas.yml            # dry run
@@ -292,6 +293,12 @@ def upload_attachments(course, config, wanted):
             if not ok:
                 sys.exit(f"Upload of {attachment.name} failed: {response}")
             print(f"uploaded  {attachment.name}")
+            if item.get("unlock_at"):
+                # An assignment that opens later (a self-grade) must not expose
+                # its key by direct link before then.
+                course.get_file(response["id"]).update(
+                    unlock_at=item["unlock_at"].isoformat(), locked=False, hidden=True
+                )
     return folder
 
 

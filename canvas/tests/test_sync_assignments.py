@@ -218,6 +218,32 @@ class SyncTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             sa.wanted_assignments(self.config)
 
+    def test_self_grade_key_file_is_locked_until_it_opens(self):
+        write(self.tmp.name, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  lock_at: 2026-11-06T23:59:00-08:00\n"
+            "  solution: k.pdf\n"
+            "  self_grade:\n    name: Homework 3 self-grade\n---\nbody\n"
+        ))
+        write(self.tmp.name, "k.pdf", "x")
+        config, wanted = sa.wanted_assignments(self.config)
+        sg = [w for w in wanted if w["name"] == "Homework 3 self-grade"]
+        updates = []
+
+        class Course:
+            def create_folder(self, *a, **k):
+                return SimpleNamespace(upload=lambda p, **kw: (True, {"id": 9}))
+
+            def get_folders(self):
+                return []
+
+            def get_file(self, i):
+                return SimpleNamespace(update=lambda **kw: updates.append(kw))
+
+        sa.upload_attachments(Course(), config, sg)
+        self.assertEqual(updates[0]["unlock_at"], "2026-11-07T07:59:00+00:00")
+        self.assertIs(updates[0]["hidden"], True)
+
     def test_solution_is_never_in_the_api_payload(self):
         payload = sa.to_api({"solution": Path("k.pdf"), "name": "x"})
         self.assertNotIn("solution", payload)
