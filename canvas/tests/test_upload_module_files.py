@@ -80,6 +80,22 @@ class UploadTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             umf.parse_file_args(["a.pdf=X", "b.pdf=X"])
 
+    def test_answer_key_pdf_without_html_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            umf.parse_file_args(["solution/Exams/midterm1.pdf=Key"])
+        self.assertIn("solution/Exams/midterm1.html", str(caught.exception))
+        with self.assertRaises(ValueError):
+            umf.parse_file_args(["midterm1-solution.pdf"])
+
+    def test_answer_key_pdf_with_html_accepted(self):
+        files = umf.parse_file_args(
+            ["midterm1-solution.pdf=Key (PDF)", "midterm1-solution.html=Key (HTML)"]
+        )
+        self.assertEqual(len(files), 2)
+
+    def test_non_key_pdf_needs_no_html(self):
+        self.assertEqual(len(umf.parse_file_args(["midterm1-note-sheet.pdf"])), 1)
+
     def test_creates_hidden_folder_and_unpublished_items(self):
         course, module = FakeCourse(None), FakeModule([])
         self.run_upload(course, module, [(Path("a.pdf"), "Note sheet")])

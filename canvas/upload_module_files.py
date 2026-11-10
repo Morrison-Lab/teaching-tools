@@ -27,6 +27,9 @@ Usage:
 TITLE defaults to the file's name. FOLDER is a Canvas Files folder, relative
 to the course's root.
 
+An answer-key PDF (one whose path mentions "solution") is refused unless its
+same-stem .html, the self-contained render, is passed too.
+
 Token: the CANVAS_TOKEN environment variable if set, otherwise the macOS
 keychain item named by --keychain-service (default `canvas-token`). The
 token is never printed.
@@ -54,7 +57,32 @@ def parse_file_args(specs):
     dupes = {t for t in titles if titles.count(t) > 1}
     if dupes:
         raise ValueError(f"duplicate titles: {sorted(dupes)}")
+    unpaired = keys_without_html([p for p, _ in files])
+    if unpaired:
+        raise ValueError(
+            "an answer-key PDF goes up with its self-contained HTML; also pass "
+            + ", ".join(str(p.with_suffix(".html")) for p in unpaired)
+        )
     return files
+
+
+def keys_without_html(paths):
+    """PDFs named as answer keys whose same-stem .html is not among `paths`.
+
+    Ezra, 2026-11-10: "so that students can examine 3d graphs in the
+    solutions files, we should start uploading html versions of the solutions
+    files in addition to the pdf versions, using the `embed-resources: true`
+    option" (teaching-tools#18). A key is a PDF whose path mentions
+    "solution", as the CI builds under solution/ and renamed copies such as
+    midterm1-solution.pdf do.
+    """
+    given = {p.with_suffix("").as_posix() for p in paths if p.suffix.lower() == ".html"}
+    return [
+        p for p in paths
+        if p.suffix.lower() == ".pdf"
+        and "solution" in p.as_posix().lower()
+        and p.with_suffix("").as_posix() not in given
+    ]
 
 
 def ensure_folder(course, path):
