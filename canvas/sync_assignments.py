@@ -19,6 +19,17 @@ link only). Without --apply it is a dry run that prints what it would do
 and writes nothing. An assignment already published in Canvas is never
 unpublished unless --allow-unpublish is given.
 
+Solutions: an optional `solution:` path in a file's `canvas:` block (or in
+`defaults`; `{stem}` as for attachments) uploads that answer key to the Canvas
+Files folder `<solutions_folder>/<file stem>` (default `Solutions/hw3`) and
+(hidden: link-only, never listed in the student Files tab) and sets the file's
+`unlock_at`, so its link opens only from the release time on, with no one
+having to remember to. Link the key from an assignment that opens at that
+time, such as the self-grade. The time is `solution_unlock_at` if given, else
+the assignment's `lock_at` (when submissions close). With neither, the script
+stops. The dry run lists each key and its release time. The release time is configurable per assignment
+through `solution_unlock_at`.
+
 Usage:
     uv run sync_assignments.py path/to/canvas.yml            # dry run
     uv run sync_assignments.py path/to/canvas.yml --apply    # writes to Canvas
@@ -49,6 +60,8 @@ Front matter of each file:
       points_possible: 34
       published: false
       description: "<p>...</p>"     # optional; HTML
+      solution: _output/solution/Homework/2026-fall-morrison/{stem}.pdf
+      solution_unlock_at: 2026-11-06T23:59:00-08:00   # optional; default lock_at
 
 Token: the CANVAS_TOKEN environment variable if set, otherwise the macOS
 keychain item named by --keychain-service (default `canvas-token`). The
@@ -82,7 +95,7 @@ MANAGED = [
     "allowed_extensions",
     "assignment_group_id",
 ]
-TIMES = ("due_at", "lock_at")
+TIMES = ("due_at", "lock_at", "solution_unlock_at")
 
 
 def read_front_matter(path):
@@ -131,6 +144,14 @@ def wanted_assignments(config_path):
             item["attachments"] = [
                 base / a.format(stem=stem) for a in item.get("attachments", [])
             ]
+            if item.get("solution"):
+                item["solution"] = base / item["solution"].format(stem=stem)
+                release = item.get("solution_unlock_at") or item.get("lock_at")
+                if release is None:
+                    raise ValueError(
+                        f"{path}: solution needs solution_unlock_at or lock_at"
+                    )
+                item["solution_unlock_at"] = release
             wanted.append(item)
     names = [w["name"] for w in wanted]
     dupes = {n for n in names if names.count(n) > 1}
@@ -227,8 +248,36 @@ def upload_attachments(course, config, wanted):
     return folder
 
 
+def upload_solutions(course, config, wanted):
+    """Upload each answer key, locked until its release time. Returns the file names."""
+    keys = [w for w in wanted if w.get("solution")]
+    if not keys:
+        return []
+    root = config.get("solutions_folder", "Solutions").strip("/")
+    for item in keys:
+        key = item["solution"]
+        release = item["solution_unlock_at"].isoformat()
+        # Hidden folder and file: Canvas never lists them to students, and
+        # unlock_at keeps the file from opening before the release time.
+        path = f"{root}/{Path(item['_source']).stem}"
+        folder = find_folder(course, path)
+        if folder is None:
+            parent, _, name = path.rpartition("/")
+            folder = course.create_folder(name, parent_folder_path=parent, hidden=True)
+        ok, response = folder.upload(str(key), on_duplicate="overwrite")
+        if not ok:
+            sys.exit(f"Upload of {key.name} failed: {response}")
+        course.get_file(response["id"]).update(
+            unlock_at=release, locked=False, hidden=True
+        )
+        print(f"uploaded  {key.name}  (released {release})")
+    return [w["solution"].name for w in keys]
+
+
 def to_api(fields):
     out = dict(fields)
+    out.pop("solution", None)
+    out.pop("solution_unlock_at", None)
     for field in TIMES:
         if isinstance(out.get(field), dt.datetime):
             out[field] = out[field].isoformat()
@@ -321,6 +370,10 @@ def main(argv=None):
     missing = [str(p) for w in wanted for p in w["attachments"] if not p.is_file()]
     if missing:
         sys.exit("Attachments not found (build them first):\n  " + "\n  ".join(missing))
+    absent = [str(w["solution"]) for w in wanted
+              if w.get("solution") and not w["solution"].is_file()]
+    if absent:
+        sys.exit("Solutions not found (render them first):\n  " + "\n  ".join(absent))
     intro = config.get("attachments_intro", "")
 
     # Plan once before writing anything, so a bad group name or an ambiguous
@@ -334,6 +387,10 @@ def main(argv=None):
         for w in wanted:
             for p in w["attachments"]:
                 print(f"would upload {p.name}")
+        for w in wanted:
+            if w.get("solution"):
+                when = w["solution_unlock_at"].isoformat()
+                print(f"would upload solution {w['solution'].name}, released {when}")
         report(steps)
         print("\nDry run: nothing was written. Re-run with --apply to write.")
         print("Attachment links show the files now in Canvas; uploading gives them new ids.")
@@ -344,6 +401,7 @@ def main(argv=None):
     links = file_links(config, folder, wanted)
     steps = plan(course, [with_attachments(w, links, intro) for w in wanted],
                  group_ids, args.allow_unpublish)
+    upload_solutions(course, config, wanted)
     report(steps)
     for action, item, diff, old in steps:
         if action == "create":
