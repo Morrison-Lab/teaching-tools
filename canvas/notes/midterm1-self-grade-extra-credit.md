@@ -27,3 +27,11 @@ The points value (100, like the HW self-grades) does not affect the weight.
 - Module M3: ML Fundamentals, module item 27638078.
 - Solutions: file 155549454, `midterm1-solution.pdf`, Exams folder (hidden file, linked from the assignment with its download verifier).
   The PDF is the CI build of Morrison-Lab/mlg `solution/Exams/2026-fall-morrison/midterm1.pdf`, never rendered by hand.
+
+## Where students find the scan
+
+Ezra uploads each student's scanned midterm to the midterm's own Canvas assignment (Ezra, 2026-11-10),
+so the self-grade assignment's description must send students there:
+"Your scanned Midterm 1 is on the Midterm 1 assignment in Canvas."
+A Midterm 2 or Midterm 3 self-grade assignment gets the same sentence, naming its own midterm.
+The Canvas description of assignment 11878421 needs that sentence added; it is a Canvas write, so it waits for Ezra's typed go.
