@@ -30,6 +30,15 @@ the assignment's `lock_at` (when submissions close). With neither, the script
 stops. The dry run lists each key and its release time. The release time is configurable per assignment
 through `solution_unlock_at`.
 
+Self-grade: an optional `self_grade:` block in a file's `canvas:` block
+(`name`, `due_at`, `points_possible`, optional `description`) makes a second
+assignment that opens, published, at the homework's `lock_at` (its `unlock_at`)
+and links the homework's `solution:` key in its description, like the
+attachments above. A self-grade tells students to use the posted solutions, so
+the key is uploaded before any assignment is written, and a `self_grade:` with
+no `solution:` or no `lock_at` is refused. The key is then shared through the
+self-grade, so it is not also put in the Solutions folder.
+
 Usage:
     uv run sync_assignments.py path/to/canvas.yml            # dry run
     uv run sync_assignments.py path/to/canvas.yml --apply    # writes to Canvas
@@ -88,6 +97,7 @@ MANAGED = [
     "name",
     "due_at",
     "lock_at",
+    "unlock_at",
     "points_possible",
     "published",
     "description",
@@ -95,7 +105,7 @@ MANAGED = [
     "allowed_extensions",
     "assignment_group_id",
 ]
-TIMES = ("due_at", "lock_at", "solution_unlock_at")
+TIMES = ("due_at", "lock_at", "unlock_at", "solution_unlock_at")
 
 
 def read_front_matter(path):
@@ -153,11 +163,47 @@ def wanted_assignments(config_path):
                     )
                 item["solution_unlock_at"] = release
             wanted.append(item)
+            if spec.get("self_grade"):
+                item["_has_self_grade"] = True
+                wanted.append(self_grade_item(item, spec["self_grade"], defaults, base, stem))
     names = [w["name"] for w in wanted]
     dupes = {n for n in names if names.count(n) > 1}
     if dupes:
         raise ValueError(f"duplicate assignment names: {sorted(dupes)}")
     return config, wanted
+
+
+def self_grade_item(homework, spec, defaults, base, stem):
+    """The self-grade assignment for `homework`, which opens when the homework locks.
+
+    The self-grade tells students to grade against the posted solutions, so it must
+    link the key: the key is its one attachment, uploaded before any assignment is
+    written, and a self-grade with no `solution` is refused, never published bare.
+    """
+    if not homework.get("solution"):
+        raise ValueError(
+            f"{homework['_source']}: self_grade needs a solution: the self-grade links it"
+        )
+    if homework.get("lock_at") is None:
+        raise ValueError(f"{homework['_source']}: self_grade needs lock_at to open at")
+    item = {
+        k: v for k, v in defaults.items()
+        if k in ("assignment_group", "submission_types", "allowed_extensions")
+    }
+    item.update(spec)
+    for field in TIMES:
+        if field in item:
+            item[field] = parse_time(item[field])
+    item.update(
+        published=True,
+        unlock_at=homework["lock_at"],
+        attachments=[homework["solution"]],
+        attachments_intro="<p>Solutions:</p>",
+        _source=homework["_source"],
+    )
+    if not item.get("name"):
+        raise ValueError(f"{homework['_source']}: self_grade needs a name")
+    return item
 
 
 def normalize(field, value):
@@ -220,6 +266,7 @@ def with_attachments(item, links, intro=""):
     """Append `intro` and links to the item's attachments to its description."""
     if not item["attachments"]:
         return item
+    intro = item.get("attachments_intro", intro)
     rows = []
     for path in item["attachments"]:
         url = links.get(path.name) or "(not uploaded yet)"
@@ -250,7 +297,8 @@ def upload_attachments(course, config, wanted):
 
 def upload_solutions(course, config, wanted):
     """Upload each answer key, locked until its release time. Returns the file names."""
-    keys = [w for w in wanted if w.get("solution")]
+    # A homework with a self-grade shares its key through that assignment instead.
+    keys = [w for w in wanted if w.get("solution") and not w.get("_has_self_grade")]
     if not keys:
         return []
     root = config.get("solutions_folder", "Solutions").strip("/")
