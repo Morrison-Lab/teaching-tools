@@ -32,6 +32,18 @@ self-contained HTML render), and the run stops if that file is missing.
 The dry run lists each key and its release time. The release time is configurable per assignment
 through `solution_unlock_at`.
 
+Self-grades: an optional `self_grade:` block in a file's `canvas:` block
+describes that homework's self-grade as an assignment of its own, synced like
+any other (teaching-tools#13, mlg#318). Its `due_at` is required, so no
+self-grade goes to Canvas without a due date. It opens at the homework's
+`lock_at` (its `unlock_at`, unless the block gives its own), so Canvas makes
+it available when the homework closes. Its name defaults to
+"<homework name> self-grade"; set `name` to match the Canvas assignment.
+It takes none of the config's `defaults` and none of the homework's fields:
+the script manages only the fields the block names, plus `unlock_at`, so a
+description or submission type set by hand in Canvas is left alone unless
+the block sets it. `assignment_group` is looked up by name, as for a homework.
+
 Usage:
     uv run sync_assignments.py path/to/canvas.yml            # dry run
     uv run sync_assignments.py path/to/canvas.yml --apply    # writes to Canvas
@@ -64,6 +76,13 @@ Front matter of each file:
       description: "<p>...</p>"     # optional; HTML
       solution: _output/solution/Homework/2026-fall-morrison/{stem}.pdf
       solution_unlock_at: 2026-11-06T23:59:00-08:00   # optional; default lock_at
+      self_grade:                   # optional; an assignment of its own
+        name: "Homework 1 self-grade"         # optional; this is the default
+        due_at: 2026-10-23T23:59:00-07:00     # required
+        unlock_at: 2026-10-15T23:59:00-07:00  # optional; default the lock_at above
+        points_possible: 100
+        published: true
+        assignment_group: Homework self-grades
 
 Token: the CANVAS_TOKEN environment variable if set, otherwise the macOS
 keychain item named by --keychain-service (default `canvas-token`). The
@@ -90,6 +109,7 @@ MANAGED = [
     "name",
     "due_at",
     "lock_at",
+    "unlock_at",
     "points_possible",
     "published",
     "description",
@@ -97,7 +117,7 @@ MANAGED = [
     "allowed_extensions",
     "assignment_group_id",
 ]
-TIMES = ("due_at", "lock_at", "solution_unlock_at")
+TIMES = ("due_at", "lock_at", "unlock_at", "solution_unlock_at")
 
 
 def read_front_matter(path):
@@ -134,6 +154,8 @@ def wanted_assignments(config_path):
             spec = meta.get("canvas")
             if not spec:
                 continue
+            spec = dict(spec)
+            self_grade = spec.pop("self_grade", None)
             item = {**defaults, **spec}
             item.setdefault("name", meta.get("title"))
             if not item.get("name"):
@@ -155,11 +177,43 @@ def wanted_assignments(config_path):
                     )
                 item["solution_unlock_at"] = release
             wanted.append(item)
+            if self_grade is not None:
+                wanted.append(self_grade_item(path, base, item, self_grade))
     names = [w["name"] for w in wanted]
     dupes = {n for n in names if names.count(n) > 1}
     if dupes:
         raise ValueError(f"duplicate assignment names: {sorted(dupes)}")
     return config, wanted
+
+
+def self_grade_item(path, base, homework, spec):
+    """The self-grade assignment that a homework's `self_grade:` block describes.
+
+    Ezra, 2026-11-09: each homework's self-grade assignment should be
+    activated as soon as that homework closes (mlg#318). Ezra, 2026-11-16:
+    the Homework 3 self-grade had no due date in Canvas, so `due_at` is
+    required here rather than left to be set by hand.
+    """
+    if not isinstance(spec, dict):
+        raise ValueError(f"{path}: canvas.self_grade must be a mapping")
+    item = dict(spec)
+    item.setdefault("name", f"{homework['name']} self-grade")
+    for field in TIMES:
+        if field in item:
+            item[field] = parse_time(item[field])
+    if item.get("due_at") is None:
+        raise ValueError(f"{path}: canvas.self_grade needs a due_at")
+    if "unlock_at" not in item:
+        if homework.get("lock_at") is None:
+            raise ValueError(
+                f"{path}: canvas.self_grade needs unlock_at, or the homework a lock_at"
+            )
+        item["unlock_at"] = homework["lock_at"]
+    if item["unlock_at"] is not None and item["due_at"] < item["unlock_at"]:
+        raise ValueError(f"{path}: canvas.self_grade is due before it opens")
+    item["_source"] = os.path.relpath(path, base) + " (self_grade)"
+    item["attachments"] = []
+    return item
 
 
 def normalize(field, value):

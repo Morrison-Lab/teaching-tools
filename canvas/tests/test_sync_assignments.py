@@ -236,5 +236,88 @@ class SyncTest(unittest.TestCase):
                             for u in updates))
 
 
+class SelfGradeTest(unittest.TestCase):
+    """A `self_grade:` block becomes its own assignment, with its due date."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+        write(self.dir, "canvas.yml", (
+            "url: https://example.instructure.com\n"
+            "course_id: 1\n"
+            "files: ['hw*.qmd']\n"
+            "defaults:\n"
+            "  submission_types: [online_upload]\n"
+            "  description: '<p>homework text</p>'\n"
+            "  assignment_group: Homework\n"
+        ))
+        self.config = Path(self.dir) / "canvas.yml"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hw(self, self_grade, lock="  lock_at: 2026-11-06T23:59:00-08:00\n"):
+        write(self.dir, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  due_at: 2026-11-05T23:59:00-08:00\n" + lock +
+            "  points_possible: 54\n" + self_grade + "---\nbody\n"
+        ))
+
+    def test_self_grade_item(self):
+        self.hw(
+            "  self_grade:\n"
+            "    due_at: 2026-11-13T23:59:00-08:00\n"
+            "    points_possible: 100\n"
+            "    assignment_group: Homework self-grades\n"
+        )
+        _, wanted = sa.wanted_assignments(self.config)
+        self.assertEqual([w["name"] for w in wanted],
+                         ["Homework 3", "Homework 3 self-grade"])
+        homework, grade = wanted
+        self.assertNotIn("self_grade", homework)
+        self.assertEqual(grade["due_at"],
+                         dt.datetime(2026, 11, 14, 7, 59, tzinfo=dt.timezone.utc))
+        # Opens when the homework closes.
+        self.assertEqual(grade["unlock_at"], homework["lock_at"])
+        # No defaults: the hand-written Canvas description stays untouched.
+        self.assertNotIn("description", grade)
+        self.assertNotIn("submission_types", grade)
+
+    def test_missing_due_date_is_refused(self):
+        self.hw("  self_grade:\n    points_possible: 100\n")
+        with self.assertRaisesRegex(ValueError, "needs a due_at"):
+            sa.wanted_assignments(self.config)
+
+    def test_due_before_open_is_refused(self):
+        self.hw("  self_grade:\n    due_at: 2026-11-01T23:59:00-08:00\n")
+        with self.assertRaisesRegex(ValueError, "due before it opens"):
+            sa.wanted_assignments(self.config)
+
+    def test_needs_an_opening_time(self):
+        self.hw("  self_grade:\n    due_at: 2026-11-13T23:59:00-08:00\n", lock="")
+        with self.assertRaisesRegex(ValueError, "needs unlock_at"):
+            sa.wanted_assignments(self.config)
+
+    def test_plan_sets_a_missing_due_date(self):
+        self.hw(
+            "  self_grade:\n"
+            "    name: HW 3 self-grade\n"
+            "    due_at: 2026-11-13T23:59:00-08:00\n"
+            "    assignment_group: Homework self-grades\n"
+        )
+        _, wanted = sa.wanted_assignments(self.config)
+        undated = SimpleNamespace(
+            name="HW 3 self-grade", due_at=None,
+            unlock_at="2026-11-07T07:59:00Z", assignment_group_id=8,
+            description="<p>written by hand</p>",
+        )
+        groups = {"Homework": 7, "Homework self-grades": 8}
+        steps = sa.plan(FakeCourse([undated]), wanted[1:], groups)
+        action, _, diff, _ = steps[0]
+        self.assertEqual(action, "update")
+        self.assertEqual(set(diff), {"due_at"})
+        self.assertEqual(sa.to_api(diff)["due_at"], "2026-11-14T07:59:00+00:00")
+
+
 if __name__ == "__main__":
     unittest.main()
