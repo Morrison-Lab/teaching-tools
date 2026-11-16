@@ -205,7 +205,7 @@ class SyncTest(unittest.TestCase):
         hw3 = [w for w in wanted if w["name"] == "Homework 3"][0]
         self.assertIs(sg["published"], True)
         self.assertEqual(sg["unlock_at"], hw3["lock_at"])
-        self.assertEqual(sg["attachments"], [hw3["solution"]])
+        self.assertEqual(sg["attachments"], sa.solution_files(hw3["solution"]))
         text = sa.with_attachments(sg, {"hw3.pdf": "u"}, "<p>Files:</p>")["description"]
         self.assertIn("<p>Solutions:</p>", text)
         self.assertIn("unlock_at", sa.MANAGED)
@@ -214,17 +214,52 @@ class SyncTest(unittest.TestCase):
         write(self.tmp.name, "hw3.qmd", (
             "---\ntitle: Homework 3\ncanvas:\n"
             "  lock_at: 2026-11-06T23:59:00-08:00\n"
-            "  self_grade:\n    name: Homework 3 self-grade\n---\nbody\n"
+            "  self_grade:\n    name: Homework 3 self-grade\n"
+            "    due_at: 2026-11-13T23:59:00-08:00\n---\nbody\n"
         ))
         with self.assertRaises(ValueError):
             sa.wanted_assignments(self.config)
+
+    def test_self_grade_without_a_due_date_is_refused(self):
+        write(self.tmp.name, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  lock_at: 2026-11-06T23:59:00-08:00\n"
+            "  solution: k.pdf\n"
+            "  self_grade:\n    name: Homework 3 self-grade\n---\nbody\n"
+        ))
+        with self.assertRaisesRegex(ValueError, "needs a due_at"):
+            sa.wanted_assignments(self.config)
+
+    def test_self_grade_due_before_it_opens_is_refused(self):
+        write(self.tmp.name, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  lock_at: 2026-11-06T23:59:00-08:00\n"
+            "  solution: k.pdf\n"
+            "  self_grade:\n    name: Homework 3 self-grade\n"
+            "    due_at: 2026-11-01T23:59:00-08:00\n---\nbody\n"
+        ))
+        with self.assertRaisesRegex(ValueError, "due before it opens"):
+            sa.wanted_assignments(self.config)
+
+    def test_self_grade_links_the_html_key_too(self):
+        write(self.tmp.name, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  lock_at: 2026-11-06T23:59:00-08:00\n"
+            "  solution: key/{stem}.pdf\n"
+            "  self_grade:\n    name: Homework 3 self-grade\n"
+            "    due_at: 2026-11-13T23:59:00-08:00\n---\nbody\n"
+        ))
+        _, wanted = sa.wanted_assignments(self.config)
+        sg = [w for w in wanted if w["name"] == "Homework 3 self-grade"][0]
+        self.assertEqual([p.name for p in sg["attachments"]], ["hw3.pdf", "hw3.html"])
 
     def test_self_grade_key_file_is_locked_until_it_opens(self):
         write(self.tmp.name, "hw3.qmd", (
             "---\ntitle: Homework 3\ncanvas:\n"
             "  lock_at: 2026-11-06T23:59:00-08:00\n"
             "  solution: k.pdf\n"
-            "  self_grade:\n    name: Homework 3 self-grade\n---\nbody\n"
+            "  self_grade:\n    name: Homework 3 self-grade\n"
+            "    due_at: 2026-11-13T23:59:00-08:00\n---\nbody\n"
         ))
         write(self.tmp.name, "k.pdf", "x")
         config, wanted = sa.wanted_assignments(self.config)

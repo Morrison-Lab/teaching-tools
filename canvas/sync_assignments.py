@@ -33,7 +33,7 @@ The dry run lists each key and its release time. The release time is configurabl
 through `solution_unlock_at`.
 
 Self-grade: an optional `self_grade:` block in a file's `canvas:` block
-(`name`, required; `due_at`, `points_possible` and `description`, optional) makes a second
+(`name` and `due_at`, required; `points_possible` and `description`, optional) makes a second
 assignment that opens, published, at the homework's `lock_at` (its `unlock_at`)
 and links the homework's `solution:` key in its description, like the
 attachments above. A self-grade tells students to use the posted solutions, so
@@ -200,12 +200,20 @@ def self_grade_item(homework, spec, defaults, base, stem):
     item.update(
         published=True,
         unlock_at=homework["lock_at"],
-        attachments=[homework["solution"]],
+        # The PDF key and its HTML twin (teaching-tools#18), which
+        # upload_solutions would otherwise have put up.
+        attachments=solution_files(homework["solution"]),
         attachments_intro="<p>Solutions:</p>",
         _source=homework["_source"],
     )
     if not item.get("name"):
         raise ValueError(f"{homework['_source']}: self_grade needs a name")
+    # Ezra, 2026-11-16, asked why a self-grade had no due date in Canvas:
+    # every self-grade takes its calendar due date from the repository.
+    if item.get("due_at") is None:
+        raise ValueError(f"{homework['_source']}: self_grade needs a due_at")
+    if item["due_at"] < item["unlock_at"]:
+        raise ValueError(f"{homework['_source']}: self_grade is due before it opens")
     return item
 
 
