@@ -38,9 +38,12 @@ assignment that opens, published, at the homework's `lock_at` (its `unlock_at`)
 and links the homework's `solution:` key in its description, like the
 attachments above. A self-grade tells students to use the posted solutions, so
 the key is uploaded before any assignment is written, and a `self_grade:` with
-no `solution:` or no `lock_at` is refused. The key is then shared through the
-self-grade, so it is not also put in the Solutions folder; its file is locked
-until the self-grade opens.
+no `solution:` or no `lock_at` is refused. The key is uploaded as the
+self-grade's attachment, into the same hidden `<solutions_folder>/<file stem>`
+folder a plain key uses, never into `attachments_folder`: the key has its
+homework PDF's name (hw4.pdf), and one folder would let it overwrite that PDF.
+Its file is locked until the self-grade opens. Any two different files that
+would share a name in one Canvas folder stop the run.
 
 Usage:
     uv run sync_assignments.py path/to/canvas.yml            # dry run
@@ -157,6 +160,7 @@ def wanted_assignments(config_path):
             item["attachments"] = [
                 base / a.format(stem=stem) for a in item.get("attachments", [])
             ]
+            item["_folder"] = config.get("attachments_folder", "").strip("/")
             if item.get("solution"):
                 item["solution"] = base / item["solution"].format(stem=stem)
                 release = item.get("solution_unlock_at") or item.get("lock_at")
@@ -168,12 +172,35 @@ def wanted_assignments(config_path):
             wanted.append(item)
             if spec.get("self_grade"):
                 item["_has_self_grade"] = True
-                wanted.append(self_grade_item(item, spec["self_grade"], defaults, base, stem))
+                sg = self_grade_item(item, spec["self_grade"], defaults, base, stem)
+                # The key goes in its own hidden folder, as upload_solutions would
+                # put it: a key is named like its homework PDF (hw4.pdf), and in one
+                # folder the key would overwrite it and both links would open the key.
+                sg["_folder"] = f"{config.get('solutions_folder', 'Solutions').strip('/')}/{stem}"
+                wanted.append(sg)
     names = [w["name"] for w in wanted]
     dupes = {n for n in names if names.count(n) > 1}
     if dupes:
         raise ValueError(f"duplicate assignment names: {sorted(dupes)}")
+    check_attachment_names(wanted)
     return config, wanted
+
+
+def check_attachment_names(wanted):
+    """Refuse two different files that would land in one Canvas folder under one name.
+
+    Uploads replace a file of the same name, and links are looked up by name,
+    so the second file would overwrite the first and every link would open it.
+    """
+    seen = {}
+    for item in wanted:
+        for path in item["attachments"]:
+            key = (item["_folder"], path.name)
+            if seen.setdefault(key, path) != path:
+                raise ValueError(
+                    f"{path} and {seen[key]} would both be uploaded as "
+                    f"{path.name} in Canvas folder {item['_folder'] or '(root)'!r}"
+                )
 
 
 def self_grade_item(homework, spec, defaults, base, stem):
@@ -259,17 +286,19 @@ def find_folder(course, path):
     return None
 
 
-def file_links(config, folder, wanted):
-    """Map each attachment's file name to its Canvas URL, or None if not uploaded."""
+def file_links(config, course, wanted):
+    """Map each (folder, file name) attachment to its Canvas URL, or None if not uploaded."""
     present = {}
-    if folder is not None:
-        present = {f.display_name: f.id for f in folder.get_files()}
+    for path in {item["_folder"] for item in wanted if item["attachments"]}:
+        folder = find_folder(course, path)
+        files = folder.get_files() if folder is not None else []
+        present[path] = {f.display_name: f.id for f in files}
     root = f"{config['url'].rstrip('/')}/courses/{config['course_id']}/files"
     links = {}
     for item in wanted:
         for path in item["attachments"]:
-            file_id = present.get(path.name)
-            links[path.name] = f"{root}/{file_id}" if file_id else None
+            file_id = present[item["_folder"]].get(path.name)
+            links[(item["_folder"], path.name)] = f"{root}/{file_id}" if file_id else None
     return links
 
 
@@ -280,7 +309,7 @@ def with_attachments(item, links, intro=""):
     intro = item.get("attachments_intro", intro)
     rows = []
     for path in item["attachments"]:
-        url = links.get(path.name) or "(not uploaded yet)"
+        url = links.get((item.get("_folder", ""), path.name)) or "(not uploaded yet)"
         rows.append(f'<li><a href="{url}">{path.name}</a></li>')
     item = dict(item)
     parts = [(item.get("description") or "").strip(), intro.strip(), "<ul>", *rows, "</ul>"]
@@ -289,15 +318,20 @@ def with_attachments(item, links, intro=""):
 
 
 def upload_attachments(course, config, wanted):
-    """Upload every attachment, replacing a file of the same name. Returns the folder."""
-    path = config.get("attachments_folder", "")
-    folder = find_folder(course, path)
-    if folder is None:
-        parent, _, name = path.strip("/").rpartition("/")
-        # Hidden: its files open from the assignment's links but are not listed
-        # in the Files tab, so an unpublished assignment's files stay out of sight.
-        folder = course.create_folder(name, parent_folder_path=parent, hidden=True)
+    """Upload every attachment to its item's folder, replacing a file of the same name."""
+    folders = {}
     for item in wanted:
+        if not item["attachments"]:
+            continue
+        path = item["_folder"]
+        if path not in folders:
+            folders[path] = find_folder(course, path)
+        if folders[path] is None:
+            parent, _, name = path.rpartition("/")
+            # Hidden: its files open from the assignment's links but are not listed
+            # in the Files tab, so an unpublished assignment's files stay out of sight.
+            folders[path] = course.create_folder(name, parent_folder_path=parent, hidden=True)
+        folder = folders[path]
         for attachment in item["attachments"]:
             ok, response = folder.upload(str(attachment), on_duplicate="overwrite")
             if not ok:
@@ -309,7 +343,6 @@ def upload_attachments(course, config, wanted):
                 course.get_file(response["id"]).update(
                     unlock_at=item["unlock_at"].isoformat(), locked=False, hidden=True
                 )
-    return folder
 
 
 def upload_solutions(course, config, wanted):
@@ -460,17 +493,17 @@ def main(argv=None):
 
     # Plan once before writing anything, so a bad group name or an ambiguous
     # match stops the run before any upload.
-    folder = find_folder(course, config.get("attachments_folder", ""))
-    links = file_links(config, folder, wanted)
+    links = file_links(config, course, wanted)
     steps = plan(course, [with_attachments(w, links, intro) for w in wanted],
                  group_ids, args.allow_unpublish)
 
     if not args.apply:
         for w in wanted:
             for p in w["attachments"]:
-                print(f"would upload {p.name}")
+                print(f"would upload {p.name} to {w['_folder'] or '(root)'}")
         for w in wanted:
-            if w.get("solution"):
+            # A homework with a self-grade shares its key as that assignment's attachment.
+            if w.get("solution") and not w.get("_has_self_grade"):
                 when = w["solution_unlock_at"].isoformat()
                 for f in solution_files(w["solution"]):
                     print(f"would upload solution {f.name}, released {when}")
@@ -480,8 +513,8 @@ def main(argv=None):
         return
 
     # Uploading replaces each file with a new one, so re-plan with the new links.
-    folder = upload_attachments(course, config, wanted)
-    links = file_links(config, folder, wanted)
+    upload_attachments(course, config, wanted)
+    links = file_links(config, course, wanted)
     steps = plan(course, [with_attachments(w, links, intro) for w in wanted],
                  group_ids, args.allow_unpublish)
     upload_solutions(course, config, wanted)

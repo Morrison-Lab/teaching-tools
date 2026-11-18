@@ -110,9 +110,11 @@ class SyncTest(unittest.TestCase):
         folder = SimpleNamespace(
             get_files=lambda: [SimpleNamespace(display_name="hw3.pdf", id=42)]
         )
-        links = sa.file_links(config, folder, wanted)
-        self.assertEqual(links["hw3.pdf"], "https://example.instructure.com/courses/1/files/42")
-        self.assertIsNone(links["hw3.qmd"])
+        with mock.patch.object(sa, "find_folder", return_value=folder):
+            links = sa.file_links(config, None, wanted)
+        self.assertEqual(links[("", "hw3.pdf")],
+                         "https://example.instructure.com/courses/1/files/42")
+        self.assertIsNone(links[("", "hw3.qmd")])
 
         text = sa.with_attachments(hw3, links)["description"]
         self.assertTrue(text.startswith("<p>Submit a PDF.</p>"))
@@ -147,7 +149,7 @@ class SyncTest(unittest.TestCase):
         plain = {"description": "<p>Submit a PDF.</p>", "attachments": []}
         self.assertEqual(sa.with_attachments(plain, {}, "<p>Files:</p>"), plain)
         withfile = {"description": "<p>Submit a PDF.</p>", "attachments": [Path("hw.pdf")]}
-        text = sa.with_attachments(withfile, {"hw.pdf": "u"}, "<p>Files:</p>")["description"]
+        text = sa.with_attachments(withfile, {("", "hw.pdf"): "u"}, "<p>Files:</p>")["description"]
         self.assertEqual(text.splitlines()[:2], ["<p>Submit a PDF.</p>", "<p>Files:</p>"])
 
     def test_api_payload_is_silent_and_serializable(self):
@@ -206,8 +208,10 @@ class SyncTest(unittest.TestCase):
         self.assertIs(sg["published"], True)
         self.assertEqual(sg["unlock_at"], hw3["lock_at"])
         self.assertEqual(sg["attachments"], sa.solution_files(hw3["solution"]))
-        text = sa.with_attachments(sg, {"hw3.pdf": "u"}, "<p>Files:</p>")["description"]
+        text = sa.with_attachments(sg, {("Solutions/hw3", "hw3.pdf"): "u"},
+                                   "<p>Files:</p>")["description"]
         self.assertIn("<p>Solutions:</p>", text)
+        self.assertIn('<a href="u">hw3.pdf</a>', text)
         self.assertIn("unlock_at", sa.MANAGED)
 
     def test_self_grade_without_a_key_is_refused(self):
@@ -279,6 +283,73 @@ class SyncTest(unittest.TestCase):
         sa.upload_attachments(Course(), config, sg)
         self.assertEqual(updates[0]["unlock_at"], "2026-11-07T07:59:00+00:00")
         self.assertIs(updates[0]["hidden"], True)
+
+    def test_self_grade_key_never_shares_a_folder_with_the_homework_pdf(self):
+        # Dry run, 2026-11-18: the key hw4.pdf and the homework's hw4.pdf went to one
+        # folder, so the key would have overwritten the homework PDF and both
+        # assignments would have linked the key.
+        d = Path(self.tmp.name)
+        write(d, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  lock_at: 2026-11-06T23:59:00-08:00\n"
+            "  attachments: ['assign/{stem}.pdf']\n"
+            "  solution: key/{stem}.pdf\n"
+            "  self_grade:\n    name: Homework 3 self-grade\n"
+            "    due_at: 2026-11-13T23:59:00-08:00\n---\nbody\n"
+        ))
+        with open(self.config, "a", encoding="utf-8") as f:
+            f.write("attachments_folder: Homework\n")
+        config, wanted = sa.wanted_assignments(self.config)
+        hw3 = [w for w in wanted if w["name"] == "Homework 3"][0]
+        sg = [w for w in wanted if w["name"] == "Homework 3 self-grade"][0]
+        self.assertEqual(hw3["_folder"], "Homework")
+        self.assertEqual(sg["_folder"], "Solutions/hw3")
+
+        files = {"Homework": [SimpleNamespace(display_name="hw3.pdf", id=1)],
+                 "Solutions/hw3": [SimpleNamespace(display_name="hw3.pdf", id=2),
+                                   SimpleNamespace(display_name="hw3.html", id=3)]}
+
+        def folder_at(course, path):
+            return SimpleNamespace(get_files=lambda: files[path])
+
+        with mock.patch.object(sa, "find_folder", side_effect=folder_at):
+            links = sa.file_links(config, None, wanted)
+        hw_text = sa.with_attachments(hw3, links)["description"]
+        sg_text = sa.with_attachments(sg, links)["description"]
+        self.assertIn("/files/1", hw_text)
+        self.assertNotIn("/files/2", hw_text)
+        self.assertIn("/files/2", sg_text)
+        self.assertNotIn("/files/1", sg_text)
+
+        uploads = {}
+
+        class Folder:
+            def __init__(self, path):
+                self.path = path
+
+            def upload(self, path, **kwargs):
+                uploads.setdefault(self.path, []).append(Path(path).name)
+                return True, {"id": 9}
+
+        class Course:
+            def create_folder(self, name, parent_folder_path="", **kwargs):
+                return Folder(f"{parent_folder_path}/{name}".strip("/"))
+
+            def get_file(self, i):
+                return SimpleNamespace(update=lambda **kw: None)
+
+        with mock.patch.object(sa, "find_folder", return_value=None):
+            sa.upload_attachments(Course(), config, wanted)
+        self.assertEqual(uploads["Homework"], ["hw3.pdf"])
+        self.assertEqual(uploads["Solutions/hw3"], ["hw3.pdf", "hw3.html"])
+
+    def test_two_files_with_one_name_in_one_folder_are_refused(self):
+        write(self.tmp.name, "hw3.qmd", (
+            "---\ntitle: Homework 3\ncanvas:\n"
+            "  attachments: ['assign/{stem}.pdf', 'key/{stem}.pdf']\n---\n"
+        ))
+        with self.assertRaisesRegex(ValueError, "would both be uploaded as hw3.pdf"):
+            sa.wanted_assignments(self.config)
 
     def test_solution_is_never_in_the_api_payload(self):
         payload = sa.to_api({"solution": Path("k.pdf"), "name": "x"})
